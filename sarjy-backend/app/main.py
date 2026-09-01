@@ -3,10 +3,17 @@ import os
 from contextlib import asynccontextmanager
 from logging.handlers import TimedRotatingFileHandler
 
-from agents import set_default_openai_key
+from agents import (
+    set_default_openai_api,
+    set_default_openai_client,
+    set_default_openai_key,
+    set_tracing_disabled,
+)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from openai import AsyncOpenAI
 
+from .agent.mcp import sarjy_mcp_server
 from .core.config import settings
 from .core.db import Base, engine
 from .routers.chat import router as chat_router
@@ -62,9 +69,19 @@ TAGS = [
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Sarjy API (log_level=%s)", settings.log_level)
-    set_default_openai_key(settings.openai_api_key)
+    if settings.llm_base_url:
+        # Route through the LiteLLM proxy (or any OpenAI-compatible endpoint,
+        # e.g. Groq/Gemini) instead of OpenAI directly.
+        client = AsyncOpenAI(base_url=settings.llm_base_url, api_key=settings.llm_api_key)
+        set_default_openai_client(client)
+        set_default_openai_api("chat_completions")  # proxy may not support the Responses API
+        set_tracing_disabled(True)  # tracing otherwise posts to OpenAI with the proxy key
+    else:
+        set_default_openai_key(settings.openai_api_key)
     Base.metadata.create_all(bind=engine)
+    await sarjy_mcp_server.connect()
     yield
+    await sarjy_mcp_server.cleanup()
 
 
 app = FastAPI(
