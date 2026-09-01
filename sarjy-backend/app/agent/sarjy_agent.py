@@ -61,7 +61,7 @@ def build_agent(memory_facts: list[str]) -> Agent:
     return Agent(
         name="Sarjy",
         instructions=instructions,
-        model=settings.openai_model,
+        model=settings.llm_model,
         tools=[save_memory],
         mcp_servers=[sarjy_mcp_server],  # get_weather lives in sarjy-mcp-server
     )

@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://sarjy:sarjy@localhost:5432/sarjy"
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+    llm_model: str
     llm_base_url: str = ""
     llm_api_key: str = ""
     cors_origin: str = "http://localhost:5173"
