@@ -21,6 +21,7 @@ TIMEOUT_SECONDS = 120.0
 DEFAULT_PROMPT = "In one sentence, what is the capital of France?"
 SEGMENTS = [
     "db_read_ms",
+    "db_write_pre_ms",
     "limiter_wait_ms",
     "llm_ttft_ms",
     "llm_total_ms",
