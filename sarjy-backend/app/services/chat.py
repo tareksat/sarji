@@ -17,7 +17,9 @@ from ..repositories import users as users_repo
 
 logger = logging.getLogger(__name__)
 
-_rate_limiter = TokenBucketRateLimiter(settings.llm_rate_limit_per_minute)
+_rate_limiter = TokenBucketRateLimiter(
+    settings.llm_rate_limit_per_minute, settings.llm_rate_limit_max_wait_seconds
+)
 
 TITLE_MAX_LENGTH = 30
 
@@ -68,7 +70,7 @@ async def handle_chat(
             {"role": m.role, "content": m.content}
             for m in sessions_repo.recent_messages(db, session_id, settings.chat_history_limit)
         ]
-        facts = memory_repo.facts_for_user(db, user_id)
+        facts = memory_repo.facts_for_user(db, user_id, settings.memory_facts_limit)
 
     agent = build_agent(facts)
     context = ChatContext(user_id=user_id, session_id=session_id, db=db)

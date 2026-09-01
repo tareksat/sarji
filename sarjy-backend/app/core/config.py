@@ -9,10 +9,15 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     cors_origin: str = "http://localhost:5173"
     llm_rate_limit_per_minute: int = 20
+    llm_rate_limit_max_wait_seconds: float = 2.0
     chat_history_limit: int = 20
+    memory_facts_limit: int = 20
     llm_retry_backoff_seconds: list[int] = [1, 2]
     log_level: str = "INFO"
     mcp_server_url: str = "http://localhost:8100/mcp"
+    # Measurement switch only: serves get_weather as a local function tool so
+    # the MCP transport's per-call cost can be measured. Ships false.
+    use_local_weather_tool: bool = False
     # The backstop, not the usual bound. Each probe carries a tighter timeout of
     # its own, so a hung dependency reports what actually failed rather than a
     # bare "timed out".
