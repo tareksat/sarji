@@ -155,4 +155,4 @@ streaming stay — without those two there is nothing to present.
 A short progress update goes out at the end of each day, including the days
 where the update is that nothing happened.
 
-The step-by-step version of this lives in [`../todo.md`](../todo.md).
+Phase-by-phase build order is in [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md); the working checklist is [`../todo.md`](../todo.md).
