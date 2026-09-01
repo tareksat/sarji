@@ -24,6 +24,24 @@ The domain and the certificate are free; the host is not. DigitalOcean has no
 free tier for services — a 2 GB droplet is ~$12/mo, covered by the $200 /
 60-day new-account credit (or $200 / 1 year via the GitHub Student Pack).
 
+## Scripted setup
+
+`droplet-init.sh` at the repo root does steps 4-7 of the runbook below —
+packages, Docker, swap on an undersized droplet, the deploy key, the clone,
+generated secrets, and a DNS pre-check — and is safe to rerun. Steps 1-3
+(droplet, cloud firewall, DuckDNS record) stay manual: they happen in
+DigitalOcean's and DuckDNS's consoles, not on the host.
+
+```
+curl -fsSL https://raw.githubusercontent.com/tareksat/sarji/main/droplet-init.sh -o droplet-init.sh
+sudo bash droplet-init.sh --domain yourname.duckdns.org --groq-key gsk_... --launch
+```
+
+Without `--launch` it stops after writing `.env` so you can review it first. The
+first run prints the deploy key and exits if the key is not yet on the GitHub
+repo. The manual runbook below is what it automates, and remains the reference
+when something fails.
+
 ## Runbook
 
 ### 1. Droplet
