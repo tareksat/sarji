@@ -6,6 +6,32 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Liveness probe",
+        "description": "Report that the API process is running.\n\nDeliberately does not touch the database: this is the target of the\nplatform's health check, and a slow database should not cycle the service.",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Always `{\"status\": \"ok\"}` when the process is up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Api Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/chat": {
       "post": {
         "tags": [
@@ -587,6 +613,10 @@
     }
   },
   "tags": [
+    {
+      "name": "health",
+      "description": "Liveness, for the platform's health check."
+    },
     {
       "name": "chat",
       "description": "One conversational turn."

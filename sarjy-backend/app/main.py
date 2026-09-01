@@ -63,6 +63,7 @@ them.
 """
 
 TAGS = [
+    {"name": "health", "description": "Liveness, for the platform's health check."},
     {"name": "chat", "description": "One conversational turn."},
     {"name": "sessions", "description": "Conversation history: list, read, rename, delete."},
 ]
