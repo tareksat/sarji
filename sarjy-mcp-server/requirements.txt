@@ -1,3 +1,6 @@
-mcp
+# Pinned: server.py imports mcp.server.mcpserver.MCPServer, which is 2.x only.
+# In the deployed image this package shares a site-packages with litellm, whose
+# resolution otherwise pulls mcp back to 1.x and breaks that import.
+mcp==2.1.1
 httpx
 pydantic-settings
