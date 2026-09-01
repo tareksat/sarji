@@ -47,11 +47,27 @@ export function useSpeechSynthesis() {
     startedRef.current = false;
   }, []);
 
+  const warmedRef = useRef(false);
+
+  // Chrome populates the voice list asynchronously, and the first utterance
+  // pays for it. Called at page load and again on the first user gesture,
+  // since autoplay policy blocks synthesis before one.
+  const warm = useCallback(() => {
+    if (!supported || warmedRef.current) return;
+    window.speechSynthesis.getVoices();
+    const silent = new SpeechSynthesisUtterance(' ');
+    silent.volume = 0;
+    silent.onend = () => {
+      warmedRef.current = true;
+    };
+    window.speechSynthesis.speak(silent);
+  }, []);
+
   const cancel = useCallback(() => {
     if (!supported) return;
     window.speechSynthesis.cancel();
     setSpeaking(false);
   }, []);
 
-  return { speak, speakChunk, beginTurn, cancel, speaking, supported };
+  return { speak, speakChunk, beginTurn, warm, cancel, speaking, supported };
 }

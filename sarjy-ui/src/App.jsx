@@ -56,10 +56,22 @@ export default function App() {
   const {
     speakChunk,
     beginTurn,
+    warm,
     cancel: cancelSpeech,
     speaking,
     supported: ttsSupported,
   } = useSpeechSynthesis();
+
+  useEffect(() => {
+    warm();
+    const onFirstGesture = () => warm();
+    window.addEventListener('pointerdown', onFirstGesture, { once: true });
+    window.addEventListener('keydown', onFirstGesture, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', onFirstGesture);
+      window.removeEventListener('keydown', onFirstGesture);
+    };
+  }, [warm]);
 
   const runSend = useCallback(
     async (userMessageId, text) => {
