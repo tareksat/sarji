@@ -9,14 +9,16 @@ const SpeechRecognitionImpl =
 // falling back to the last interim transcript.
 const INTERIM_FALLBACK_MS = 400;
 
-export function useSpeechRecognition(onResult, { onSpeechEnd } = {}) {
+export function useSpeechRecognition(onResult, { onSpeechEnd, onSpeechStart } = {}) {
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef(null);
   const interimTimeoutRef = useRef(null);
   const onResultRef = useRef(onResult);
   const onSpeechEndRef = useRef(onSpeechEnd);
+  const onSpeechStartRef = useRef(onSpeechStart);
   onResultRef.current = onResult;
   onSpeechEndRef.current = onSpeechEnd;
+  onSpeechStartRef.current = onSpeechStart;
 
   useEffect(() => {
     if (!SpeechRecognitionImpl) return;
@@ -48,6 +50,8 @@ export function useSpeechRecognition(onResult, { onSpeechEnd } = {}) {
       }
       if (final) send(final);
     };
+
+    recognition.onspeechstart = () => onSpeechStartRef.current?.();
 
     recognition.onspeechend = () => {
       onSpeechEndRef.current?.();

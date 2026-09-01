@@ -7,6 +7,8 @@ export default function MessageInput({
   micSupported,
   micState,
   onMicToggle,
+  handsFree,
+  onHandsFreeToggle,
   muted,
   onMuteToggle,
 }) {
@@ -44,6 +46,17 @@ export default function MessageInput({
         >
           <span className="mic-ring" />
           <MicIcon className="mic-icon" />
+        </button>
+      )}
+
+      {micSupported && (
+        <button
+          className={`icon-btn hands-free-btn ${handsFree ? 'active' : ''}`}
+          onClick={onHandsFreeToggle}
+          title={handsFree ? 'Hands-free on — speak any time to interrupt' : 'Hands-free off'}
+          aria-pressed={handsFree}
+        >
+          ∞
         </button>
       )}
 

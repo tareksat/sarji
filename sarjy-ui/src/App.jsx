@@ -49,6 +49,7 @@ export default function App() {
   const [muted, setMuted] = useState(false);
   const [timings, setTimings] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [handsFree, setHandsFree] = useState(false);
   // The timer for the turn currently in flight. Created at speech end for a
   // spoken turn, so it can measure the transcription tail.
   const timerRef = useRef(null);
@@ -185,9 +186,24 @@ export default function App() {
     timerRef.current = timer;
   }, []);
 
+  // Barge-in: the moment the user starts speaking, Sarjy stops. Only armed in
+  // hands-free mode — with a hot mic during playback, the microphone can hear
+  // the speakers and interrupt Sarjy with her own voice.
+  const handleSpeechStart = useCallback(() => {
+    if (speaking) cancelSpeech();
+  }, [speaking, cancelSpeech]);
+
   const { supported: micSupported, listening, start, stop } = useSpeechRecognition(handleSend, {
     onSpeechEnd: handleSpeechEnd,
+    onSpeechStart: handleSpeechStart,
   });
+
+  // Hands-free keeps the microphone open between turns, which is what makes
+  // barge-in reachable without pressing anything.
+  useEffect(() => {
+    if (!handsFree || !micSupported || listening || loading) return;
+    start();
+  }, [handsFree, micSupported, listening, loading, start]);
 
   const micState = listening ? 'listening' : loading ? 'processing' : 'idle';
 
@@ -286,6 +302,8 @@ export default function App() {
           micSupported={micSupported}
           micState={micState}
           onMicToggle={handleMicToggle}
+          handsFree={handsFree}
+          onHandsFreeToggle={() => setHandsFree((prev) => !prev)}
           muted={muted}
           onMuteToggle={handleMuteToggle}
         />
