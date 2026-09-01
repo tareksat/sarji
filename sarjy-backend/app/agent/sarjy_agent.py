@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from ..core.config import settings
 from ..models import Memory
+from .local_weather import local_get_weather
 from .mcp import sarjy_mcp_server
 
 logger = logging.getLogger(__name__)
@@ -58,10 +59,17 @@ def build_agent(memory_facts: list[str]) -> Agent:
         bullet_list = "\n".join(f"- {fact}" for fact in memory_facts)
         instructions += f"\n\nKnown facts about this user:\n{bullet_list}"
 
+    tools = [save_memory]
+    mcp_servers = [sarjy_mcp_server]  # get_weather lives in sarjy-mcp-server
+    if settings.use_local_weather_tool:
+        # A/B for the latency write-up: same tool, no transport hop.
+        tools.append(local_get_weather)
+        mcp_servers = []
+
     return Agent(
         name="Sarjy",
         instructions=instructions,
         model=settings.llm_model,
-        tools=[save_memory],
-        mcp_servers=[sarjy_mcp_server],  # get_weather lives in sarjy-mcp-server
+        tools=tools,
+        mcp_servers=mcp_servers,
     )
