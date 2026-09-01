@@ -5,11 +5,13 @@ const SpeechRecognitionImpl =
     ? window.SpeechRecognition || window.webkitSpeechRecognition
     : null;
 
-export function useSpeechRecognition(onResult) {
+export function useSpeechRecognition(onResult, { onSpeechEnd } = {}) {
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef(null);
   const onResultRef = useRef(onResult);
+  const onSpeechEndRef = useRef(onSpeechEnd);
   onResultRef.current = onResult;
+  onSpeechEndRef.current = onSpeechEnd;
 
   useEffect(() => {
     if (!SpeechRecognitionImpl) return;
@@ -23,6 +25,9 @@ export function useSpeechRecognition(onResult) {
       const transcript = event.results[event.results.length - 1][0].transcript.trim();
       if (transcript) onResultRef.current(transcript);
     };
+    // The mark that exposes the STT tail: the dead air between the user
+    // stopping and the transcript arriving.
+    recognition.onspeechend = () => onSpeechEndRef.current?.();
     recognition.onend = () => setListening(false);
     recognition.onerror = () => setListening(false);
 

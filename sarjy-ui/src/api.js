@@ -21,7 +21,7 @@ export async function sendMessage(userId, sessionId, message) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user_id: userId, session_id: sessionId, message }),
-  }); // { reply: string }
+  }); // { reply: string, timings: object | null }
 }
 
 export async function fetchSessions(userId) {

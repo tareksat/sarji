@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ChatWindow from './components/ChatWindow';
 import { HamburgerIcon } from './components/icons';
 import MessageInput from './components/MessageInput';
@@ -7,6 +7,7 @@ import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis';
 import { useSessions } from './hooks/useSessions';
 import { getUserId, sendMessage } from './api';
+import { createTurnTimer } from './timing';
 import './App.css';
 
 const userId = getUserId();
@@ -30,14 +31,23 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [muted, setMuted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // The timer for the turn currently in flight. Created at speech end for a
+  // spoken turn, so it can measure the transcription tail.
+  const timerRef = useRef(null);
 
   const { speak, cancel: cancelSpeech, supported: ttsSupported } = useSpeechSynthesis();
 
   const runSend = useCallback(
     async (userMessageId, text) => {
       setLoading(true);
+      const timer = timerRef.current ?? createTurnTimer();
+      timerRef.current = timer;
+      timer.mark('requestSent');
       try {
-        const { reply } = await sendMessage(userId, activeId, text);
+        const { reply, timings } = await sendMessage(userId, activeId, text);
+        timer.mark('firstByte');
+        timer.mark('replyComplete');
+        timer.setServer(timings);
         updateActiveMessages((prev) => [
           ...prev,
           {
@@ -48,7 +58,16 @@ export default function App() {
           },
         ]);
         notePersisted();
-        if (!muted && ttsSupported) speak(reply);
+        if (!muted && ttsSupported) {
+          speak(reply, {
+            onStart: () => {
+              timer.mark('firstAudio');
+              timer.publish();
+            },
+          });
+        } else {
+          timer.publish();
+        }
       } catch {
         updateActiveMessages((prev) =>
           prev.map((m) => (m.id === userMessageId ? { ...m, status: 'error' } : m))
@@ -87,7 +106,15 @@ export default function App() {
     [messages, cancelSpeech, updateActiveMessages, runSend]
   );
 
-  const { supported: micSupported, listening, start, stop } = useSpeechRecognition(handleSend);
+  const handleSpeechEnd = useCallback(() => {
+    const timer = createTurnTimer();
+    timer.mark('speechEnd');
+    timerRef.current = timer;
+  }, []);
+
+  const { supported: micSupported, listening, start, stop } = useSpeechRecognition(handleSend, {
+    onSpeechEnd: handleSpeechEnd,
+  });
 
   const micState = listening ? 'listening' : loading ? 'processing' : 'idle';
 
