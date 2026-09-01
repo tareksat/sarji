@@ -16,7 +16,9 @@ class TokenBucketRateLimiter:
         self._updated_at = time.monotonic()
         self._lock = asyncio.Lock()
 
-    async def acquire(self) -> None:
+    async def acquire(self) -> float:
+        """Take a token, waiting if necessary. Returns the ms spent waiting."""
+        started = time.monotonic()
         while True:
             async with self._lock:
                 now = time.monotonic()
@@ -26,7 +28,7 @@ class TokenBucketRateLimiter:
 
                 if self.tokens >= 1:
                     self.tokens -= 1
-                    return
+                    return (time.monotonic() - started) * 1000.0
 
                 wait_time = (1 - self.tokens) / self.refill_rate
 

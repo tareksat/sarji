@@ -46,9 +46,9 @@ async def chat(req: ChatRequest, db: DbSession = Depends(get_db)):
     session_id = parse_uuid(req.session_id, "session_id")
 
     try:
-        reply = await handle_chat(db, user_id, session_id, req.message)
+        reply, timings = await handle_chat(db, user_id, session_id, req.message)
     except LLMUnavailableError as exc:
         logger.warning("Returning 502 for user_id=%s session_id=%s: %s", user_id, session_id, exc)
         raise HTTPException(status_code=502, detail=str(exc))
 
-    return ChatResponse(reply=reply)
+    return ChatResponse(reply=reply, timings=timings)

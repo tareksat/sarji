@@ -29,3 +29,12 @@ class ChatResponse(BaseModel):
     )
 
     reply: str = Field(description="Sarjy's reply. Spoken aloud by the client unless muted.")
+    timings: dict[str, float | None] | None = Field(
+        default=None,
+        description=(
+            "Server-side spans for this turn, in milliseconds: `db_read_ms`, "
+            "`db_write_ms`, `limiter_wait_ms`, `llm_total_ms`, `llm_ttft_ms` "
+            "(null unless streamed) and `total_ms`. Present so the client can "
+            "attribute latency without server access."
+        ),
+    )
