@@ -32,6 +32,38 @@
         }
       }
     },
+    "/api/health/full": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Dependency health check",
+        "description": "Probe Postgres, the LiteLLM proxy and the MCP server, and report each\none's state and probe latency.\n\nReturns `503` when any probe fails, with the same body either way, so the\nbroken dependency is named rather than guessed at.\n\nThis is a diagnostic endpoint, **not** the platform's health-check target --\n`/api/health` is. Pointing an orchestrator here would restart a perfectly\nhealthy API container every time a dependency blinked.",
+        "operationId": "health_full_api_health_full_get",
+        "responses": {
+          "200": {
+            "description": "Every dependency reachable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FullHealthResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "At least one dependency is unreachable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FullHealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/chat": {
       "post": {
         "tags": [
@@ -458,6 +490,48 @@
           "reply": "It's 34\u00b0C and clear in Riyadh right now."
         }
       },
+      "DependencyHealth": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "error",
+              "skipped"
+            ],
+            "title": "Status",
+            "description": "`skipped` means the dependency is not configured in this environment, which is not a failure."
+          },
+          "latency_ms": {
+            "type": "number",
+            "title": "Latency Ms",
+            "description": "How long the probe itself took."
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail",
+            "description": "A short fact when healthy, or the exception when not."
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "latency_ms"
+        ],
+        "title": "DependencyHealth",
+        "example": {
+          "detail": "1 tools",
+          "latency_ms": 4.1,
+          "status": "ok"
+        }
+      },
       "ErrorResponse": {
         "properties": {
           "detail": {
@@ -472,6 +546,51 @@
         "title": "ErrorResponse",
         "example": {
           "detail": "user_id must be a UUID"
+        }
+      },
+      "FullHealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded"
+            ],
+            "title": "Status",
+            "description": "`degraded` when at least one dependency failed its probe."
+          },
+          "dependencies": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DependencyHealth"
+            },
+            "type": "object",
+            "title": "Dependencies"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "dependencies"
+        ],
+        "title": "FullHealthResponse",
+        "example": {
+          "dependencies": {
+            "database": {
+              "latency_ms": 2.3,
+              "status": "ok"
+            },
+            "litellm": {
+              "detail": "ConnectError: All connection attempts failed",
+              "latency_ms": 11.7,
+              "status": "error"
+            },
+            "mcp": {
+              "detail": "1 tools",
+              "latency_ms": 6.8,
+              "status": "ok"
+            }
+          },
+          "status": "degraded"
         }
       },
       "HTTPValidationError": {
