@@ -33,31 +33,38 @@ Run:
 uvicorn app.main:app --reload --port 8000
 ```
 
-Config is env-driven via `app/config.py` (pydantic-settings, reads `.env`). Copy `.env.example` to `.env` and set `OPENAI_API_KEY`. No migrations tool — tables are created on startup via `Base.metadata.create_all` in the `lifespan` handler in `app/main.py`.
+Config is env-driven via `app/core/config.py` (pydantic-settings, reads `.env`). Copy `.env.example` to `.env` and set `OPENAI_API_KEY`. No migrations tool — tables are created on startup via `Base.metadata.create_all` in the `lifespan` handler in `app/main.py`.
 
 No test suite exists yet.
 
 ### Architecture
 
-Single endpoint: `POST /api/chat` (`app/main.py`) taking `{user_id, session_id, message}` (both ids are client-generated UUIDs) and returning `{reply}`.
+Two chat endpoints (`app/routers/chat.py`), both taking `{user_id, session_id, message}` (both ids are client-generated UUIDs) and persisting identically, plus session reads in `app/routers/sessions.py`:
 
-Request flow (`app/chat_service.py::handle_chat`):
-1. Upsert `User` / `Session` rows if new (`app/models.py`).
-2. Persist the incoming user `Message`.
-3. Load the last `chat_history_limit` messages for the session, plus all `Memory` rows for the user (durable cross-session facts).
-4. Build an `Agent` (`app/agent/sarjy_agent.py::build_agent`) with those memory facts injected into the system prompt, and run it via `agents.Runner.run`, passing history as `input`.
+- `POST /api/chat` — returns `{reply, timings}`. Kept unchanged as the "before" column of the latency comparison; do not repurpose it.
+- `POST /api/chat/stream` — `text/event-stream`, one `data:` frame per token (`delta`), then one `done` frame with the reply and timings, or an `error` frame under HTTP 200 (the response has usually already begun). This is what the UI uses.
+
+Request flow (`app/services/chat.py::handle_chat`, and `app/services/streaming.py::stream_chat`):
+1. Upsert `User` / `Session` rows if new (`app/models/`).
+2. Persist the incoming user `Message` — flushed on the non-streaming path, **committed** on the streamed one, because its history read runs in a separate Session.
+3. Load the last `chat_history_limit` messages plus the newest `memory_facts_limit` `Memory` rows (durable cross-session facts). The streamed path runs the two reads concurrently via `asyncio.to_thread`, each with its own `SessionLocal` — SQLAlchemy's sync `Session` is not thread-safe.
+4. Build an `Agent` (`app/agent/sarjy_agent.py::build_agent`) with those memory facts injected into the system prompt, and run it via `agents.Runner.run` (or `Runner.run_streamed`), passing history as `input`.
 5. Retry on `openai.RateLimitError` using `llm_retry_backoff_seconds` (`_run_with_retry`); any other exception rolls back the DB transaction and surfaces as `LLMUnavailableError` -> HTTP 502.
 6. Persist the assistant reply and commit.
 
-A process-local `TokenBucketRateLimiter` (`app/rate_limiter.py`) throttles outbound LLM calls to `llm_rate_limit_per_minute`, queuing rather than rejecting.
+Every turn is instrumented with `app/core/timing.py::Timings` — named spans returned on the wire and logged (`db_read_ms`, `db_write_pre_ms`, `limiter_wait_ms`, `llm_ttft_ms`, `llm_total_ms`, `db_write_ms`, `total_ms`). `llm_ttft_ms` exists only on the streamed path; `llm_total_ms` only on the non-streamed one. The harness that turns these into p50/p95 tables is `scripts/measure.py`, with results in `docs/latency/`.
+
+A process-local `TokenBucketRateLimiter` (`app/core/rate_limiter.py`) throttles outbound LLM calls to `llm_rate_limit_per_minute`. It queues rather than rejecting, but only up to `llm_rate_limit_max_wait_seconds`; past that it raises `RateLimitedError`, which becomes a 429 with `Retry-After` or an `error` frame.
 
 The agent (`app/agent/sarjy_agent.py`) exposes one local tool, `save_memory`, which the LLM calls to persist durable facts about the user into the `memories` table — this is how "remembers things across sessions" works, separate from the recent-message history. Everything else (currently just `get_weather`) comes from `sarjy-mcp-server` via `mcp_servers=[sarjy_mcp_server]` on the `Agent` — see `app/agent/mcp.py` for the client singleton, connected/cleaned up once in `app/main.py`'s `lifespan` (`MCP_SERVER_URL` in config).
 
-DB models (`app/models.py`): `User` (1) -> `Session` (many) -> `Message` (many); `Memory` belongs to a `User` and optionally references the `Session` it was learned in.
+The agent also carries a local copy of the weather tool (`app/agent/local_weather.py`) behind `USE_LOCAL_WEATHER_TOOL`. It exists only to measure what the MCP transport hop costs and ships `false` — the MCP server is the shipped path.
+
+DB models (`app/models/`): `User` (1) -> `Session` (many) -> `Message` (many); `Memory` belongs to a `User` and optionally references the `Session` it was learned in.
 
 ### Note on session persistence
 
-Sessions/messages are persisted server-side (Postgres), but there is currently no GET endpoint to read them back — the UI's session list, titles, and message history are stored purely client-side in `localStorage` (`sarjy-ui/src/hooks/useSessions.js`) and keyed by the same UUID the backend uses. Clearing browser storage loses the visible history even though the DB rows remain.
+Sessions and messages are read back from Postgres through `app/routers/sessions.py`; `localStorage` holds only the user id and which chat was last open (`sarjy-ui/src/hooks/useSessions.js`).
 
 ## MCP server (`sarjy-mcp-server/`)
 
@@ -89,12 +96,13 @@ No test suite exists yet.
 
 ### Architecture
 
-`App.jsx` is the composition root: wires together session state, chat state, speech I/O, and the three presentational components (`ChatWindow`, `MessageInput`, `SessionList`).
+`App.jsx` is the composition root: wires together session state, chat state, speech I/O, and the presentational components (`ChatWindow`, `MessageInput`, `SessionList`, `TurnTimings`).
 
-- `hooks/useSessions.js` — owns the list of chat sessions, the active session, and message arrays; persists to `localStorage` under `sarjy_sessions` / `sarjy_active_session`. Session titles auto-derive from the first user message.
-- `api.js` — `getUserId()` (persists a UUID in `localStorage` under `sarjy_user_id`) and `sendMessage(userId, sessionId, message)`, the single point that calls `POST /api/chat`.
+- `hooks/useSessions.js` — owns the list of chat sessions, the active session, and message arrays. Session titles auto-derive from the first user message.
+- `api.js` — `getUserId()` (persists a UUID in `localStorage` under `sarjy_user_id`), `sendMessageStream(...)` (the path the UI takes: reads the SSE frames off `POST /api/chat/stream`), and `sendMessage(...)` for the non-streaming route.
 - `hooks/useSpeechRecognition.js` / `hooks/useSpeechSynthesis.js` — wrap the browser's native `SpeechRecognition`/`webkitSpeechRecognition` and `SpeechSynthesis` APIs (STT/TTS). Both must degrade gracefully when unsupported (feature-detected, not polyfilled).
+- `timing.js` — one timer per turn (speech end, request sent, first byte, first audio), published as a `[sarjy-timing]` console line that `scripts/summarize_client_timings.py` reads, and rendered live by `components/TurnTimings.jsx`.
 
-Voice flow: a final STT transcript is sent exactly like a typed message (same `handleSend` in `App.jsx`); an assistant reply is spoken automatically via TTS unless muted, and any in-flight speech is cancelled when a new message is sent.
+Voice flow: a final STT transcript is sent exactly like a typed message (same `handleSend` in `App.jsx`). The reply streams in, and `App.jsx` splits it on sentence boundaries so TTS starts at the first sentence rather than the last token — whole sentences, because token-by-token speech has no prosody. Recognition finalizes at `onspeechend` rather than waiting out the engine's silence timeout, with the last interim transcript as a fallback and a `sent` guard so the two paths cannot both fire. A hands-free toggle keeps the mic open between turns and arms barge-in: speaking over Sarjy cancels playback. It is opt-in because a hot mic during playback can hear the speakers.
 
 ### when commiting anything commit it with my username do not use Claude

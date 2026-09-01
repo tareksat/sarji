@@ -27,9 +27,44 @@ Requires `.env` (copy from `.env.example`). With `MCP_SERVER_URL` pointing at `h
 | `OPENAI_API_KEY` | — | required |
 | `CORS_ORIGIN` | `http://localhost:5173` | UI origin |
 | `LLM_RATE_LIMIT_PER_MINUTE` | 20 | outbound LLM call cap |
+| `LLM_RATE_LIMIT_MAX_WAIT_SECONDS` | 2.0 | longest a turn queues behind the bucket before the caller is told to retry |
 | `CHAT_HISTORY_LIMIT` | 20 | messages replayed per turn |
+| `MEMORY_FACTS_LIMIT` | 20 | newest durable facts injected into the system prompt |
+| `USE_LOCAL_WEATHER_TOOL` | `false` | measurement switch: serves `get_weather` locally instead of over MCP |
 | `LLM_RETRY_BACKOFF_SECONDS` | `[1,2]` | retry delays on rate limit |
 | `LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR` |
+
+## Endpoints
+
+`POST /api/chat` returns the whole reply plus a `timings` object for the turn.
+`POST /api/chat/stream` does the same work but emits `text/event-stream` frames
+— `data: {"type":"delta"|"done"|"error", …}` — so the browser can start speaking
+at the first sentence. Both persist identically. The non-streaming route is kept
+deliberately: it is the "before" column of the latency comparison.
+
+Failures on the streaming route arrive as an `error` frame under HTTP 200,
+because the response has usually already begun by then.
+
+## Deployment
+
+Public deployment is the compose stack behind Caddy on a droplet — see
+[`../docs/DEPLOY.md`](../docs/DEPLOY.md). `../render.yaml` plus the root
+`Dockerfile` are the single-container variant for Render, where LiteLLM and the
+MCP server run on loopback inside the same image.
+
+## Latency harness
+
+```
+python scripts/measure.py --base-url $SARJY_URL --label baseline
+python scripts/measure.py --base-url $SARJY_URL --label streaming --stream
+python scripts/summarize_client_timings.py ../docs/latency/runs/baseline-client.txt
+```
+
+Ten turns of one fixed prompt, fresh session id each, warm-up discarded; writes
+a p50/p95 table to `docs/latency/runs/<label>.md`. The browser-side marks are
+collected by hand from the Chrome console (`[sarjy-timing]` lines) — driving
+them headlessly would change the thing being measured. Results live in
+[`../docs/latency/`](../docs/latency/).
 
 ## Logs
 
@@ -42,7 +77,9 @@ Requires `.env` (copy from `.env.example`). With `MCP_SERVER_URL` pointing at `h
 
 | Line prefix | Meaning |
 |---|---|
-| `handle_chat start/complete` | one chat turn, by `user_id`/`session_id` |
+| `handle_chat start/complete` | one non-streamed chat turn; `complete` carries the turn's spans |
+| `stream_chat start/complete` | one streamed chat turn; `complete` carries the spans, including `llm_ttft_ms` |
+| `Rate limiter: refusing to queue` | the bucket hit its wait cap — the caller got a 429 or an error frame |
 | `Rate limited by OpenAI on attempt` | OpenAI 429, retrying |
 | `handle_chat failed` | turn failed after retries — ERROR + traceback, root cause of a 502 |
 | `Returning 502 for` | client saw a 502 |

@@ -78,9 +78,29 @@ sequenceDiagram
     UI->>U: renders bubble, speaks reply unless muted
 ```
 
-Everything before the provider call is serial, and the limiter queues rather
-than rejecting. Both facts are on the critical path for time-to-first-audio and
-are the subject of the latency work.
+That is the non-streaming route, kept unchanged as the "before" column of the
+latency comparison. It now also returns a `timings` object — `db_read_ms`,
+`limiter_wait_ms`, `llm_total_ms`, `db_write_ms`, `total_ms` — so a slow turn on
+the deployed app can be attributed without server access.
+
+**The streamed turn.** `POST /api/chat/stream` does the same work and persists
+the same rows, but emits `text/event-stream` frames: one `delta` per token, then
+a single `done` frame with the full reply and the turn's timings. The browser
+speaks each completed sentence as it arrives instead of waiting for the last
+token, which is where the time-to-first-audio win comes from. Three things
+differ from the diagram above:
+
+- The user message is **committed**, not flushed, before the reads — the history
+  read runs in a separate Session and would not otherwise see it.
+- History and memory facts are read **concurrently**, each on its own Session,
+  since SQLAlchemy's sync Session is not thread-safe.
+- The limiter's queue is **bounded** (`llm_rate_limit_max_wait_seconds`). Past
+  the cap it raises rather than waiting: a 429 with `Retry-After` on the
+  non-streaming route, an `error` frame on the streamed one. An unbounded queue
+  was indistinguishable from a hung request.
+
+`llm_ttft_ms` exists only on the streamed path — a non-streamed turn has no
+first-token moment to measure.
 
 **Failure handling.** `openai.RateLimitError` is retried on a fixed backoff
 (`llm_retry_backoff_seconds`). Any other exception rolls back the transaction
@@ -214,12 +234,14 @@ All settings come from the environment via pydantic-settings
 | `cors_origin` | `http://localhost:5173` | Vite dev server |
 | `chat_history_limit` | 20 | Messages replayed per turn |
 | `llm_rate_limit_per_minute` | 20 | Token-bucket capacity |
+| `llm_rate_limit_max_wait_seconds` | 2.0 | Longest a turn queues before the caller is told to retry |
+| `memory_facts_limit` | 20 | Newest durable facts injected into the system prompt |
+| `use_local_weather_tool` | `false` | Measurement switch for the MCP-overhead A/B |
 | `llm_retry_backoff_seconds` | `[1, 2]` | Retry schedule on 429 |
 
-**Planned.** The provider becomes three env vars — base URL, key, model — so
-Gemini and Groq can be swapped without a code change. That is config-driven on
-purpose: an adapter layer would be indirection around a single live
-implementation.
+The provider is three env vars — `llm_base_url`, `llm_api_key`, `llm_model` — so
+Gemini and Groq swap without a code change. That is config-driven on purpose: an
+adapter layer would be indirection around a single live implementation.
 
 ## 7. Deployment
 
@@ -227,7 +249,17 @@ Development runs three processes: Postgres in Docker, uvicorn on port 8000, and
 the Vite dev server on 5173 proxying `/api` to the backend
 (`sarjy-ui/vite.config.js`).
 
-**Planned.** FastAPI serves the built `dist/`, collapsing this to one origin and
-one URL — no CORS, and a link a reviewer can open without setup. Target is
-Render for the app and Neon for Postgres.
+Three packaged shapes exist, all one origin — nginx or Caddy in front, `/api`
+proxied to the backend, so there is no CORS anywhere:
+
+- `docker-compose.yml` — the whole application locally on `http://localhost:8080`.
+- `docker-compose.prod.yml` + `Caddyfile` — the same stack on a public host, with
+  Caddy terminating TLS and obtaining the certificate itself. HTTPS is a
+  functional requirement here, not decoration: the browser only grants
+  microphone access to the speech input on a secure origin. Runbook:
+  [`DEPLOY.md`](DEPLOY.md).
+- `Dockerfile` + `render.yaml` at the repo root — the same four processes in one
+  image for Render, which runs one image per service rather than a compose file.
+  LiteLLM lives in its own virtualenv there, because `litellm[proxy]` pins
+  `mcp<2.0.0` while the MCP server needs 2.x.
 
