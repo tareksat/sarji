@@ -3,6 +3,7 @@ import ChatWindow from './components/ChatWindow';
 import { HamburgerIcon } from './components/icons';
 import MessageInput from './components/MessageInput';
 import SessionList from './components/SessionList';
+import TurnTimings from './components/TurnTimings';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis';
 import { useSessions } from './hooks/useSessions';
@@ -295,6 +296,8 @@ export default function App() {
         ) : (
           <ChatWindow messages={messages} loading={loading} onRetry={handleRetry} />
         )}
+
+        <TurnTimings timings={timings} />
 
         <MessageInput
           onSend={handleSend}

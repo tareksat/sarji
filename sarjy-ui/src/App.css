@@ -654,3 +654,33 @@
     gap: 8px;
   }
 }
+
+.turn-timings {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px 0;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.ttfa-readout strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.waterfall {
+  display: flex;
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.waterfall-seg {
+  height: 100%;
+}
+
+.seg-stt { background: #8b8bff; }
+.seg-db { background: #4fb3a5; }
+.seg-model { background: #f4a142; }
+.seg-audio { background: #7a7f8a; }
