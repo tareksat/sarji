@@ -6,11 +6,28 @@ import SessionList from './components/SessionList';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis';
 import { useSessions } from './hooks/useSessions';
-import { getUserId, sendMessage } from './api';
+import { getUserId, sendMessageStream } from './api';
 import { createTurnTimer } from './timing';
 import './App.css';
 
 const userId = getUserId();
+
+// Returns [complete sentences, remainder]. Speaking whole sentences keeps the
+// prosody natural; speaking token-by-token does not.
+const SENTENCE_END = /([.!?…]+["')\]]*)(\s+)/;
+
+function takeSentences(buffer) {
+  const sentences = [];
+  let rest = buffer;
+  for (;;) {
+    const match = SENTENCE_END.exec(rest);
+    if (!match) break;
+    const cut = match.index + match[1].length + match[2].length;
+    sentences.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut);
+  }
+  return [sentences, rest];
+}
 
 export default function App() {
   const {
@@ -30,12 +47,19 @@ export default function App() {
 
   const [loading, setLoading] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [timings, setTimings] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // The timer for the turn currently in flight. Created at speech end for a
   // spoken turn, so it can measure the transcription tail.
   const timerRef = useRef(null);
 
-  const { speak, cancel: cancelSpeech, supported: ttsSupported } = useSpeechSynthesis();
+  const {
+    speakChunk,
+    beginTurn,
+    cancel: cancelSpeech,
+    speaking,
+    supported: ttsSupported,
+  } = useSpeechSynthesis();
 
   const runSend = useCallback(
     async (userMessageId, text) => {
@@ -43,40 +67,77 @@ export default function App() {
       const timer = timerRef.current ?? createTurnTimer();
       timerRef.current = timer;
       timer.mark('requestSent');
+      beginTurn();
+
+      const assistantId = crypto.randomUUID();
+      let full = '';
+      let spoken = '';
+      let unspoken = '';
+      let opened = false;
+
+      const markAudio = () => {
+        timer.mark('firstAudio');
+      };
+
       try {
-        const { reply, timings } = await sendMessage(userId, activeId, text);
-        timer.mark('firstByte');
-        timer.mark('replyComplete');
-        timer.setServer(timings);
-        updateActiveMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            text: reply,
-            createdAt: new Date().toISOString(),
+        await sendMessageStream(userId, activeId, text, {
+          onDelta: (delta) => {
+            timer.mark('firstByte');
+            full += delta;
+            unspoken += delta;
+
+            if (!opened) {
+              opened = true;
+              updateActiveMessages((prev) => [
+                ...prev,
+                {
+                  id: assistantId,
+                  role: 'assistant',
+                  text: full,
+                  createdAt: new Date().toISOString(),
+                },
+              ]);
+            } else {
+              updateActiveMessages((prev) =>
+                prev.map((m) => (m.id === assistantId ? { ...m, text: full } : m))
+              );
+            }
+
+            const [sentences, rest] = takeSentences(unspoken);
+            unspoken = rest;
+            if (!muted && ttsSupported) {
+              sentences.forEach((sentence) => {
+                spoken += sentence;
+                speakChunk(sentence, { onStart: markAudio });
+              });
+            }
           },
-        ]);
-        notePersisted();
-        if (!muted && ttsSupported) {
-          speak(reply, {
-            onStart: () => {
-              timer.mark('firstAudio');
-              timer.publish();
-            },
-          });
-        } else {
-          timer.publish();
-        }
+          onDone: (event) => {
+            timer.mark('replyComplete');
+            timer.setServer(event.timings);
+            const tail = event.reply.slice(spoken.length).trim();
+            if (!muted && ttsSupported && tail) speakChunk(tail, { onStart: markAudio });
+            updateActiveMessages((prev) =>
+              prev.map((m) => (m.id === assistantId ? { ...m, text: event.reply } : m))
+            );
+            setTimings(timer.publish());
+            notePersisted();
+          },
+          onError: (error) => {
+            throw error;
+          },
+        });
       } catch {
         updateActiveMessages((prev) =>
-          prev.map((m) => (m.id === userMessageId ? { ...m, status: 'error' } : m))
+          prev
+            .filter((m) => m.id !== assistantId)
+            .map((m) => (m.id === userMessageId ? { ...m, status: 'error' } : m))
         );
       } finally {
         setLoading(false);
       }
     },
-    [activeId, muted, ttsSupported, speak, updateActiveMessages, notePersisted]
+    [activeId, muted, ttsSupported, speakChunk, beginTurn, updateActiveMessages, notePersisted]
   );
 
   const handleSend = useCallback(
