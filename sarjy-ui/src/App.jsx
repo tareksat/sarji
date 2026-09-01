@@ -17,6 +17,10 @@ const userId = getUserId();
 // prosody natural; speaking token-by-token does not.
 const SENTENCE_END = /([.!?…]+["')\]]*)(\s+)/;
 
+// How long to wait for speech to start before publishing the turn without a
+// time-to-first-audio.
+const TTFA_PUBLISH_GRACE_MS = 2000;
+
 function takeSentences(buffer) {
   const sentences = [];
   let rest = buffer;
@@ -89,8 +93,19 @@ export default function App() {
       let unspoken = '';
       let opened = false;
 
+      // The turn is published once, at the later of the last token and the
+      // first audio — either can come second. A short reply can finish
+      // streaming before speech starts; a long one starts speaking mid-stream.
+      let replyDone = false;
+      let published = false;
+      const publishOnce = () => {
+        if (published) return;
+        published = true;
+        setTimings(timer.publish());
+      };
       const markAudio = () => {
         timer.mark('firstAudio');
+        if (replyDone) publishOnce();
       };
 
       try {
@@ -134,7 +149,12 @@ export default function App() {
             updateActiveMessages((prev) =>
               prev.map((m) => (m.id === assistantId ? { ...m, text: event.reply } : m))
             );
-            setTimings(timer.publish());
+            replyDone = true;
+            if (muted || !ttsSupported) publishOnce();
+            // Backstop: if synthesis never reports a start — blocked by
+            // autoplay policy, or no voice available — the turn is still
+            // published, with a null ttfa_ms rather than nothing at all.
+            else window.setTimeout(publishOnce, TTFA_PUBLISH_GRACE_MS);
             notePersisted();
           },
           onError: (error) => {
@@ -149,6 +169,10 @@ export default function App() {
         );
       } finally {
         setLoading(false);
+        // Marks are write-once, so a timer carried into the next turn would
+        // report this turn's numbers forever. A spoken turn creates its own at
+        // speech end; a typed one creates it here on the next send.
+        timerRef.current = null;
       }
     },
     [activeId, muted, ttsSupported, speakChunk, beginTurn, updateActiveMessages, notePersisted]
