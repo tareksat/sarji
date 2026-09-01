@@ -12,5 +12,18 @@ services:
     volumes:
       - sarjy_pgdata:/var/lib/postgresql/data
 
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    ports:
+      - "4000:4000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+
 volumes:
   sarjy_pgdata:
