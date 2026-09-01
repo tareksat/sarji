@@ -1,0 +1,16 @@
+name: sarjy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: sarjy
+      POSTGRES_PASSWORD: sarjy
+      POSTGRES_DB: sarjy
+    ports:
+      - "5432:5432"
+    volumes:
+      - sarjy_pgdata:/var/lib/postgresql/data
+
+volumes:
+  sarjy_pgdata:
