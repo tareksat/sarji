@@ -1,0 +1,16 @@
+# TLS terminator for the production stack (docker-compose.prod.yml).
+#
+# Naming a real domain here is what makes Caddy obtain a Let's Encrypt
+# certificate over HTTP-01 and renew it; plain HTTP is redirected to HTTPS
+# automatically. HTTPS is required, not decorative: the browser only grants
+# microphone access to the speech input on a secure origin.
+
+{$SITE_DOMAIN} {
+	encode gzip
+
+	reverse_proxy ui:80 {
+		# The counterpart of `proxy_buffering off` in sarjy-ui/nginx.conf: without
+		# it Caddy re-buffers and a streamed chat reply arrives in one blob.
+		flush_interval -1
+	}
+}
