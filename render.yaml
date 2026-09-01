@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: sarjy
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # Not the free plan: it sleeps, and its cold start would land inside the
+    # latency numbers the deep dive reports.
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false          # set in the Render dashboard from the Neon string
+      - key: LLM_MODEL
+        sync: false
+      - key: LLM_BASE_URL
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_RATE_LIMIT_PER_MINUTE
+        value: "20"
+      - key: CHAT_HISTORY_LIMIT
+        value: "20"
+      - key: LOG_LEVEL
+        value: "INFO"
+      - key: MCP_SERVER_URL
+        value: "http://127.0.0.1:8100/mcp"
