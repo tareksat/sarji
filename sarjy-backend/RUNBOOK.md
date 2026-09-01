@@ -2,12 +2,22 @@
 
 ## Start
 
+**Whole application, containerized** — Postgres, LiteLLM, the MCP server, this API and the frontend:
+
 ```
-docker compose -f ../docker-compose.yml up -d   # Postgres, port 5432
+docker compose -f ../docker-compose.yml up -d --build
+```
+
+Then open `http://localhost:8080`. Only the UI is published; nginx serves the built frontend and proxies `/api` to the backend container, so there is one origin and no CORS. Reads the repo-root `.env` for the provider keys and `LITELLM_MASTER_KEY`. To reach the API directly from the host, uncomment the `ports` block on the `backend` service.
+
+**This API only, on the host** — for `--reload` while the rest runs in containers:
+
+```
+docker compose -f ../docker-compose.yml up -d postgres litellm mcp
 uvicorn app.main:app --reload --port 8000
 ```
 
-Requires `.env` (copy from `.env.example`), `OPENAI_API_KEY` set. No migrations — tables auto-created on startup.
+Requires `.env` (copy from `.env.example`). With `MCP_SERVER_URL` pointing at `http://localhost:8100/mcp`, publish the `mcp` service's port first (its `ports` block is commented out). No migrations — tables auto-created on startup.
 
 ## Config (`.env`)
 

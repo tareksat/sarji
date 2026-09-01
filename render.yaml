@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: sarjy
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # Not the free plan: it sleeps, and its cold start would land inside the
+    # latency numbers the deep dive reports.
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false          # set in the Render dashboard from the Neon string
+      # A model_name from litellm/config.yaml — gpt-4o-mini, groq-oss, or
+      # gemini-flash. Switching providers is this one value.
+      - key: LLM_MODEL
+        value: "groq-oss"
+      # LiteLLM runs in this container on loopback; LLM_API_KEY must equal
+      # LITELLM_MASTER_KEY, and provider keys are read by LiteLLM, not the API.
+      - key: LLM_BASE_URL
+        value: "http://127.0.0.1:4000"
+      - key: LLM_API_KEY
+        sync: false
+      - key: LITELLM_MASTER_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: LLM_RATE_LIMIT_PER_MINUTE
+        value: "20"
+      - key: CHAT_HISTORY_LIMIT
+        value: "20"
+      - key: LOG_LEVEL
+        value: "INFO"
+      - key: MCP_SERVER_URL
+        value: "http://127.0.0.1:8100/mcp"

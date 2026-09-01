@@ -11,12 +11,14 @@ from agents import (
 )
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from openai import AsyncOpenAI
 
 from .agent.mcp import sarjy_mcp_server
 from .core.config import settings
 from .core.db import Base, engine
 from .routers.chat import router as chat_router
+from .routers.health import router as health_router
 from .routers.sessions import router as sessions_router
 
 LOG_DIR = "logs"
@@ -61,6 +63,7 @@ them.
 """
 
 TAGS = [
+    {"name": "health", "description": "Liveness, for the platform's health check."},
     {"name": "chat", "description": "One conversational turn."},
     {"name": "sessions", "description": "Conversation history: list, read, rename, delete."},
 ]
@@ -99,5 +102,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(health_router)
 app.include_router(chat_router)
 app.include_router(sessions_router)
+
+# The Vite build is copied here by the Docker build. Mounted last so that every
+# /api route above wins, and only when present so local `uvicorn --reload` runs
+# without a frontend build.
+UI_DIST = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(UI_DIST):
+    app.mount("/", StaticFiles(directory=UI_DIST, html=True), name="ui")
+    logger.info("Serving built UI from %s", UI_DIST)
+else:
+    logger.info("No built UI at %s — API only", UI_DIST)
