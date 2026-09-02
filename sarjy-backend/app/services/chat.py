@@ -92,7 +92,7 @@ async def handle_chat(
         session, history, facts = await asyncio.to_thread(_read)
 
     agent = build_agent(facts, mcp_ready=await mcp.ensure_connected())
-    context = ChatContext(user_id=user_id, session_id=session_id, db=db)
+    context = ChatContext(user_id=user_id, session_id=session_id)
 
     try:
         with timings.span("llm_total_ms"):

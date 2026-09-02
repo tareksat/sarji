@@ -16,19 +16,9 @@ from app.models import Session as SessionModel  # noqa: E402
 from app.models import User  # noqa: E402
 
 
-@pytest.fixture
-def session_factory():
-    """An in-memory database shared by every Session the test opens.
-
-    StaticPool keeps one connection, which is what makes `:memory:` visible to
-    the second Session the streaming path opens for its history read.
-    """
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
+def _make_engine(url, **connect_args):
+    engine = create_engine(url, connect_args=connect_args, future=True, poolclass=StaticPool
+                           if url == "sqlite://" else None)
     # SQLite ignores foreign keys unless asked; Postgres does not. Without this
     # the tests cannot see an insert that lands before the row it references.
     @event.listens_for(engine, "connect")
@@ -38,6 +28,31 @@ def session_factory():
         cursor.close()
 
     Base.metadata.create_all(bind=engine)
+    return engine
+
+
+@pytest.fixture
+def session_factory():
+    """An in-memory database shared by every Session the test opens.
+
+    StaticPool keeps one connection, which is what makes `:memory:` visible to
+    the second Session the streaming path opens for its history read.
+    """
+    engine = _make_engine("sqlite://", check_same_thread=False)
+    yield sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    engine.dispose()
+
+
+@pytest.fixture
+def file_session_factory(tmp_path):
+    """A file-backed database: one connection per Session, like Postgres.
+
+    For tests that commit from several threads at once. StaticPool's single
+    shared connection would let one Session's close() roll back another's
+    flushed-but-uncommitted rows, which is an artifact of the pool, not of the
+    code under test.
+    """
+    engine = _make_engine(f"sqlite:///{tmp_path / 'test.db'}", check_same_thread=False)
     yield sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     engine.dispose()
 

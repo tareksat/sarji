@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     llm_rate_limit_max_wait_seconds: float = Field(default=2.0, ge=0)
     chat_history_limit: int = Field(default=20, gt=0)
     memory_facts_limit: int = Field(default=20, gt=0)
+    # Characters per stored fact. Facts are injected into every later prompt.
+    memory_fact_max_length: int = Field(default=200, gt=0)
     llm_retry_backoff_seconds: list[int] = [1, 2]
     log_level: str = "INFO"
     # Empty means log to stdout only, which is what a container wants.

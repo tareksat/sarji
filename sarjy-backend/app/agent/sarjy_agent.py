@@ -5,9 +5,10 @@ from uuid import UUID
 
 from agents import Agent, RunContextWrapper, function_tool
 from sqlalchemy import select
-from sqlalchemy.orm import Session as DbSession
+from sqlalchemy.exc import IntegrityError
 
 from ..core.config import settings
+from ..core.db import SessionLocal
 from ..models import Memory
 from .local_weather import local_get_weather
 from .mcp import sarjy_mcp_server
@@ -38,12 +39,15 @@ FACT_LOG_MAX_LENGTH = 60
 
 @dataclass
 class ChatContext:
+    # No DB session here on purpose. The SDK runs every tool call of a turn as
+    # its own task, and this tool does its write on a worker thread; handing
+    # those the request's Session would share one non-thread-safe Session
+    # between threads. The tool opens its own.
     user_id: UUID
     session_id: UUID
-    db: DbSession
 
 
-def _save_fact(db: DbSession, user_id: UUID, session_id: UUID, fact: str) -> bool:
+def _save_fact(user_id: UUID, session_id: UUID, fact: str) -> bool:
     """Store the fact unless the user already has it. True if a row was added.
 
     Idempotent because a turn can be replayed: `_run_with_retry` re-runs the
@@ -51,15 +55,24 @@ def _save_fact(db: DbSession, user_id: UUID, session_id: UUID, fact: str) -> boo
     committed by then. Without the check, "remember I live in Riyadh" becomes
     two or three identical rows, each of which is then injected into the system
     prompt of every later turn.
+
+    The select is only a fast path. Two calls in one turn run in parallel, so
+    both can miss the row the other is about to commit; the unique constraint
+    on (user_id, content) is what actually holds the line.
     """
-    existing = db.execute(
-        select(Memory.id).where(Memory.user_id == user_id, Memory.content == fact).limit(1)
-    ).first()
-    if existing is not None:
-        return False
-    db.add(Memory(user_id=user_id, content=fact, source_session_id=session_id))
-    db.commit()
-    return True
+    with SessionLocal() as db:
+        existing = db.execute(
+            select(Memory.id).where(Memory.user_id == user_id, Memory.content == fact).limit(1)
+        ).first()
+        if existing is not None:
+            return False
+        db.add(Memory(user_id=user_id, content=fact, source_session_id=session_id))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            return False
+        return True
 
 
 @function_tool
@@ -73,16 +86,22 @@ async def save_memory(ctx: RunContextWrapper[ChatContext], fact: str) -> str:
     if not fact:
         return "Nothing to remember."
 
+    # Every stored fact is injected into the system prompt of every later turn,
+    # so one verbose "fact" would raise the time-to-first-token for the life of
+    # the account. Shortened rather than refused: refusing costs the memory.
+    shortened = len(fact) > settings.memory_fact_max_length
+    if shortened:
+        fact = fact[: settings.memory_fact_max_length].rstrip()
+
     try:
         # Off the event loop: this runs mid-turn, while other turns are
         # streaming through the same worker.
         added = await asyncio.to_thread(
-            _save_fact, ctx.context.db, ctx.context.user_id, ctx.context.session_id, fact
+            _save_fact, ctx.context.user_id, ctx.context.session_id, fact
         )
     except Exception:
         # Returned to the model rather than raised: a failed memory write should
         # cost the user a memory, not the whole answer.
-        ctx.context.db.rollback()
         logger.exception("Could not save memory for user_id=%s", ctx.context.user_id)
         return "That could not be saved right now."
 
@@ -92,7 +111,7 @@ async def save_memory(ctx: RunContextWrapper[ChatContext], fact: str) -> str:
         "Saved" if added else "Already knew", ctx.context.user_id, truncated,
     )
 
-    return f"Remembered: {fact}"
+    return f"Remembered (shortened): {fact}" if shortened else f"Remembered: {fact}"
 
 
 def build_agent(memory_facts: list[str], mcp_ready: bool = True) -> Agent:

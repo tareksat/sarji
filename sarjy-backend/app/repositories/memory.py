@@ -13,7 +13,13 @@ def facts_for_user(db: DbSession, user_id: uuid.UUID, limit: int | None = None) 
     every turn, so an unbounded read grows the input token count — and the
     time-to-first-token — for the life of the account.
     """
-    query = select(Memory).where(Memory.user_id == user_id).order_by(Memory.created_at.desc())
+    # Facts saved in one turn are written in parallel and can share a
+    # `created_at`; the id tiebreaker makes the order stable across reads.
+    query = (
+        select(Memory)
+        .where(Memory.user_id == user_id)
+        .order_by(Memory.created_at.desc(), Memory.id.desc())
+    )
     if limit is not None:
         query = query.limit(limit)
     rows = list(db.execute(query).scalars().all())

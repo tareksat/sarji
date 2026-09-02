@@ -100,7 +100,7 @@ async def stream_chat(
         history, facts = await _load_context(session_id, user_id)
 
     agent = build_agent(facts, mcp_ready=await mcp.ensure_connected())
-    context = ChatContext(user_id=user_id, session_id=session_id, db=db)
+    context = ChatContext(user_id=user_id, session_id=session_id)
 
     def _persist(reply: str) -> None:
         sessions_repo.add_message(db, session_id, "assistant", reply)
