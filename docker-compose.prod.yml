@@ -72,6 +72,8 @@ services:
       LLM_RATE_LIMIT_PER_MINUTE: ${LLM_RATE_LIMIT_PER_MINUTE:-20}
       CHAT_HISTORY_LIMIT: ${CHAT_HISTORY_LIMIT:-20}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Measurement switch for the MCP-vs-local tool comparison. Ships false.
+      USE_LOCAL_WEATHER_TOOL: ${USE_LOCAL_WEATHER_TOOL:-false}
     depends_on:
       postgres:
         condition: service_healthy
