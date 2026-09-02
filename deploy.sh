@@ -123,26 +123,31 @@ git clean -fd
 DEPLOYED="$(git log --oneline -1)"
 printf '    now at: %s\n' "$DEPLOYED"
 
-# --- 3. Stop ----------------------------------------------------------------
+# --- 3. Build ---------------------------------------------------------------
+# Before the stop, not after. Building with the stack already down means the
+# site is off for the whole multi-minute frontend build, and a build that fails
+# leaves it off with nothing to roll back to.
+
+if [ "$BUILD" -eq 1 ]; then
+    log "Building images (several minutes on 1 vCPU; the site stays up)"
+    docker compose -f "$COMPOSE_FILE" build
+fi
+
+# --- 4. Stop ----------------------------------------------------------------
 # Never `down -v`: sarjy_pgdata holds the database and caddy_data the issued
 # certificate, and Let's Encrypt rate-limits reissues.
 
 log "Stopping the running stack"
 docker compose -f "$COMPOSE_FILE" down --remove-orphans
 
-# --- 4. Start ---------------------------------------------------------------
+# --- 5. Start ---------------------------------------------------------------
 
-if [ "$BUILD" -eq 1 ]; then
-    log "Building and starting (several minutes on 1 vCPU)"
-    docker compose -f "$COMPOSE_FILE" up -d --build
-else
-    log "Starting without a rebuild"
-    docker compose -f "$COMPOSE_FILE" up -d
-fi
+log "Starting"
+docker compose -f "$COMPOSE_FILE" up -d
 
 docker compose -f "$COMPOSE_FILE" ps
 
-# --- 5. Health --------------------------------------------------------------
+# --- 6. Health --------------------------------------------------------------
 # Checked from inside the backend container, which is where the compose
 # healthcheck runs it too — no host-side curl or published port needed.
 

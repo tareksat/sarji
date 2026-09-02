@@ -8,7 +8,7 @@ from .config import settings
 # query on one fails with AdminShutdown instead of reconnecting. The ping is one
 # round-trip on checkout, and a dead connection is discarded and replaced.
 engine = create_engine(
-    settings.database_url,
+    settings.sqlalchemy_url,
     future=True,
     pool_pre_ping=True,
     connect_args={"connect_timeout": settings.db_connect_timeout_seconds},

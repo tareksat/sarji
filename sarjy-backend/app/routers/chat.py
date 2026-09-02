@@ -9,6 +9,7 @@ from ..core.db import get_db
 from ..core.ids import parse_uuid
 from ..core.rate_limiter import RateLimitedError
 from ..dtos import ChatRequest, ChatResponse, ErrorResponse
+from ..repositories import sessions as sessions_repo
 from ..services.chat import LLMUnavailableError, handle_chat
 from ..services.streaming import stream_chat
 
@@ -17,6 +18,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["chat"])
 
 BAD_UUID = {400: {"model": ErrorResponse, "description": "A path or query id is not a UUID."}}
+NOT_OWNED = {
+    404: {"model": ErrorResponse, "description": "The session belongs to a different user."}
+}
+
+
+def _assert_available(db: DbSession, session_id, user_id) -> None:
+    """Reject a session id that exists under a different user.
+
+    Checked here as well as in the repository so the streamed endpoint can
+    answer with a status code: once the response has begun, all it can send is
+    an error frame under HTTP 200.
+
+    404 rather than 403 -- confirming that the id exists would be its own small
+    disclosure.
+    """
+    session = sessions_repo.get(db, session_id)
+    if session is not None and session.user_id != user_id:
+        logger.warning("Refusing cross-user session access user_id=%s session_id=%s",
+                       user_id, session_id)
+        raise HTTPException(status_code=404, detail="Session not found.")
 
 
 @router.post(
@@ -26,6 +47,7 @@ BAD_UUID = {400: {"model": ErrorResponse, "description": "A path or query id is 
     response_description="Sarjy's reply text.",
     responses={
         **BAD_UUID,
+        **NOT_OWNED,
         429: {
             "model": ErrorResponse,
             "description": "The local token bucket would have queued this turn past its cap.",
@@ -52,6 +74,7 @@ async def chat(req: ChatRequest, db: DbSession = Depends(get_db)):
     """
     user_id = parse_uuid(req.user_id, "user_id")
     session_id = parse_uuid(req.session_id, "session_id")
+    _assert_available(db, session_id, user_id)
 
     try:
         reply, timings = await handle_chat(db, user_id, session_id, req.message)
@@ -61,6 +84,9 @@ async def chat(req: ChatRequest, db: DbSession = Depends(get_db)):
             detail=str(exc),
             headers={"Retry-After": str(max(1, round(exc.retry_after_seconds)))},
         )
+    except sessions_repo.SessionOwnershipError:
+        # The pre-check above is not atomic; this closes the race.
+        raise HTTPException(status_code=404, detail="Session not found.")
     except LLMUnavailableError as exc:
         logger.warning("Returning 502 for user_id=%s session_id=%s: %s", user_id, session_id, exc)
         raise HTTPException(status_code=502, detail=str(exc))
@@ -72,7 +98,7 @@ async def chat(req: ChatRequest, db: DbSession = Depends(get_db)):
     "/api/chat/stream",
     summary="Send a message and stream Sarjy's reply",
     response_description="A `text/event-stream` of `delta` frames, then one `done` frame.",
-    responses={**BAD_UUID},
+    responses={**BAD_UUID, **NOT_OWNED},
 )
 async def chat_stream(req: ChatRequest, db: DbSession = Depends(get_db)):
     """Run one conversational turn, streamed.
@@ -83,9 +109,13 @@ async def chat_stream(req: ChatRequest, db: DbSession = Depends(get_db)):
     `data: {json}` and carry `type` of `delta`, `done`, or `error`; failures
     arrive as an `error` frame with HTTP 200, since the response has usually
     already begun by then.
+
+    Both `done` and `error` are terminal: exactly one of them ends the stream,
+    and no `done` follows an `error`.
     """
     user_id = parse_uuid(req.user_id, "user_id")
     session_id = parse_uuid(req.session_id, "session_id")
+    _assert_available(db, session_id, user_id)
 
     async def events():
         async for event in stream_chat(db, user_id, session_id, req.message):

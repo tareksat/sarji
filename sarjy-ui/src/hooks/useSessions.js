@@ -3,7 +3,9 @@ import {
   deleteSession,
   fetchMessages,
   fetchSessions,
+  readStored,
   renameSession as renameSessionRequest,
+  writeStored,
 } from '../api';
 
 const ACTIVE_KEY = 'sarjy_active_session';
@@ -30,16 +32,23 @@ export function useSessions(userId) {
   const [activeId, setActiveId] = useState(null);
   const [messagesBySession, setMessagesBySession] = useState({});
   const [loadingSessions, setLoadingSessions] = useState(true);
-  const [loadingMessages, setLoadingMessages] = useState(false);
 
   // Read inside callbacks without making them depend on every state change.
   const sessionsRef = useRef(sessions);
   const activeIdRef = useRef(activeId);
   const messagesRef = useRef(messagesBySession);
 
-  useEffect(() => {
-    sessionsRef.current = sessions;
-  }, [sessions]);
+  // Every write to the session list goes through here so the ref is current the
+  // instant the call returns. A ref synced by an effect lags a render, which is
+  // long enough for two quick deletes to resurrect the first one from a stale
+  // snapshot, and a state updater's return value cannot be read back
+  // synchronously (React runs it at render time, twice under StrictMode).
+  const commitSessions = useCallback((updater) => {
+    const next = typeof updater === 'function' ? updater(sessionsRef.current) : updater;
+    sessionsRef.current = next;
+    setSessions(next);
+    return next;
+  }, []);
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -63,13 +72,13 @@ export function useSessions(userId) {
 
       if (loaded.length === 0) {
         const pending = createPendingSession();
-        setSessions([pending]);
+        commitSessions([pending]);
         setActiveId(pending.id);
         setMessagesBySession({ [pending.id]: [] });
       } else {
-        const stored = localStorage.getItem(ACTIVE_KEY);
+        const stored = readStored(ACTIVE_KEY);
         const restored = loaded.some((s) => s.id === stored) ? stored : loaded[0].id;
-        setSessions(loaded);
+        commitSessions(loaded);
         setActiveId(restored);
       }
       setLoadingSessions(false);
@@ -78,10 +87,10 @@ export function useSessions(userId) {
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [userId, commitSessions]);
 
   useEffect(() => {
-    if (activeId) localStorage.setItem(ACTIVE_KEY, activeId);
+    if (activeId) writeStored(ACTIVE_KEY, activeId);
   }, [activeId]);
 
   // Messages load on demand and stay cached, so re-selecting a session is
@@ -98,7 +107,6 @@ export function useSessions(userId) {
     }
 
     let cancelled = false;
-    setLoadingMessages(true);
 
     (async () => {
       let loaded = [];
@@ -109,7 +117,6 @@ export function useSessions(userId) {
       } finally {
         if (!cancelled) {
           setMessagesBySession((prev) => ({ ...prev, [activeId]: loaded }));
-          setLoadingMessages(false);
         }
       }
     })();
@@ -121,32 +128,47 @@ export function useSessions(userId) {
 
   const activeSession = sessions.find((s) => s.id === activeId);
   const messages = messagesBySession[activeId] ?? [];
+  // Derived rather than stored: a flag set before the fetch and cleared only on
+  // its non-cancelled completion latches on forever if the user switches to a
+  // cached session mid-flight, leaving the chat replaced by a placeholder.
+  const loadingMessages = !!activeId && messagesBySession[activeId] === undefined;
 
   const selectSession = useCallback((id) => setActiveId(id), []);
 
   const newSession = useCallback(() => {
     const pending = createPendingSession();
-    setSessions((prev) => [pending, ...prev]);
+    commitSessions((prev) => [pending, ...prev]);
     setMessagesBySession((prev) => ({ ...prev, [pending.id]: [] }));
     setActiveId(pending.id);
+  }, [commitSessions]);
+
+  // Explicitly addressed. A turn resolves its target session once, when it is
+  // sent: resolving it per delta writes a reply that is still streaming into
+  // whichever conversation the user has since clicked on.
+  const updateSessionMessages = useCallback((sessionId, updater) => {
+    if (!sessionId) return;
+    setMessagesBySession((prev) => ({
+      ...prev,
+      [sessionId]: updater(prev[sessionId] ?? []),
+    }));
   }, []);
 
-  const updateActiveMessages = useCallback((updater) => {
-    const id = activeIdRef.current;
-    if (!id) return;
-    setMessagesBySession((prev) => ({ ...prev, [id]: updater(prev[id] ?? []) }));
-  }, []);
+  const updateActiveMessages = useCallback(
+    (updater) => updateSessionMessages(activeIdRef.current, updater),
+    [updateSessionMessages]
+  );
 
-  // Called after a turn completes. A pending session has just been created
-  // server-side, so refetch to pick up its derived title; otherwise just move it
-  // to the top of the list locally rather than spending a request on ordering.
-  const notePersisted = useCallback(async () => {
-    const id = activeIdRef.current;
+  // Called after a turn completes, for the session that turn was sent from. A
+  // pending session has just been created server-side, so refetch to pick up its
+  // derived title; otherwise just move it to the top of the list locally rather
+  // than spending a request on ordering.
+  const notePersisted = useCallback(async (sessionId) => {
+    const id = sessionId ?? activeIdRef.current;
     const session = sessionsRef.current.find((s) => s.id === id);
 
     if (!session?.pending) {
       const now = new Date().toISOString();
-      setSessions((prev) =>
+      commitSessions((prev) =>
         prev.map((s) => (s.id === id ? { ...s, updatedAt: now } : s)).sort(byRecency)
       );
       return;
@@ -154,33 +176,33 @@ export function useSessions(userId) {
 
     try {
       const loaded = await fetchSessions(userId);
-      setSessions((prev) => {
+      commitSessions((prev) => {
         const stillPending = prev.filter((s) => s.pending && !loaded.some((l) => l.id === s.id));
         return [...stillPending, ...loaded].sort(byRecency);
       });
     } catch {
       // Non-fatal: the title stays "New chat" until the next successful load.
     }
-  }, [userId]);
+  }, [userId, commitSessions]);
 
   const renameActiveSession = useCallback(
     async (id, title) => {
       const trimmed = title.trim();
       if (!trimmed) return;
       const previous = sessionsRef.current.find((s) => s.id === id);
-      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title: trimmed } : s)));
+      commitSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title: trimmed } : s)));
 
       if (previous?.pending) return; // no row to rename yet
 
       try {
         await renameSessionRequest(userId, id, trimmed);
       } catch {
-        setSessions((prev) =>
+        commitSessions((prev) =>
           prev.map((s) => (s.id === id ? { ...s, title: previous?.title ?? s.title } : s))
         );
       }
     },
-    [userId]
+    [userId, commitSessions]
   );
 
   const removeSession = useCallback(
@@ -196,9 +218,8 @@ export function useSessions(userId) {
 
       const remaining = sessionsRef.current.filter((s) => s.id !== id);
       const replacement = remaining.length === 0 ? createPendingSession() : null;
-      const next = replacement ? [replacement] : remaining;
+      const next = commitSessions(replacement ? [replacement] : remaining);
 
-      setSessions(next);
       setMessagesBySession((prev) => {
         const copy = { ...prev };
         delete copy[id];
@@ -207,7 +228,7 @@ export function useSessions(userId) {
       });
       if (activeIdRef.current === id) setActiveId(next[0].id);
     },
-    [userId]
+    [userId, commitSessions]
   );
 
   return {
@@ -220,6 +241,7 @@ export function useSessions(userId) {
     selectSession,
     newSession,
     updateActiveMessages,
+    updateSessionMessages,
     notePersisted,
     renameActiveSession,
     removeSession,

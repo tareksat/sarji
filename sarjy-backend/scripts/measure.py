@@ -11,6 +11,7 @@ segments.
 
 import argparse
 import json
+import math
 import time
 import uuid
 from pathlib import Path
@@ -33,10 +34,18 @@ SEGMENTS = [
 
 
 def percentile(values: list[float], p: float) -> float | None:
+    """Nearest-rank percentile: the smallest value at or above rank ceil(p/100*n).
+
+    The previous form, `round(p/100*n + 0.5) - 1`, landed one rank high and, via
+    banker's rounding, did so only for some sample counts -- at n=10 it reported
+    the upper median as p50, and runs of different lengths were not comparable
+    with each other.
+    """
     if not values:
         return None
     ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, round(p / 100 * len(ordered) + 0.5) - 1))
+    rank = math.ceil(p / 100 * len(ordered))
+    index = min(len(ordered) - 1, max(0, rank - 1))
     return round(ordered[index], 1)
 
 

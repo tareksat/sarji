@@ -7,6 +7,10 @@ from ..models import Memory, Message
 from ..models import Session as SessionModel
 
 
+class SessionOwnershipError(Exception):
+    """Raised when a session id is used with a user id that does not own it."""
+
+
 def get(db: DbSession, session_id: uuid.UUID) -> SessionModel | None:
     return db.get(SessionModel, session_id)
 
@@ -26,20 +30,39 @@ def owned(db: DbSession, session_id: uuid.UUID, user_id: uuid.UUID) -> SessionMo
 def get_or_create(
     db: DbSession, session_id: uuid.UUID, user_id: uuid.UUID, title: str
 ) -> SessionModel:
+    """Load this user's session, creating it if the id is new.
+
+    The ownership check is the same scoping the read routes apply. Without it a
+    client that supplies someone else's `session_id` writes into their
+    conversation and gets its recent messages replayed back in the reply.
+
+    The row is flushed but not committed: the caller owns the transaction, so a
+    turn that fails before it is answered leaves no empty session behind. The
+    flush is what puts this insert ahead of the message that references it --
+    the models carry no relationship(), so the unit of work orders the two
+    inserts by mapper name and would otherwise write the message first.
+    """
     session = get(db, session_id)
     if session is None:
         session = SessionModel(id=session_id, user_id=user_id, title=title)
         db.add(session)
-        db.commit()
+        db.flush()
+        return session
+    if session.user_id != user_id:
+        raise SessionOwnershipError(f"Session {session_id} belongs to another user")
     return session
 
 
-def list_for_user(db: DbSession, user_id: uuid.UUID) -> list[SessionModel]:
+def list_for_user(
+    db: DbSession, user_id: uuid.UUID, limit: int, offset: int = 0
+) -> list[SessionModel]:
     rows = (
         db.execute(
             select(SessionModel)
             .where(SessionModel.user_id == user_id)
             .order_by(SessionModel.updated_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
         .scalars()
         .all()
@@ -70,12 +93,21 @@ def delete_cascade(db: DbSession, session: SessionModel) -> None:
     db.commit()
 
 
-def list_messages(db: DbSession, session_id: uuid.UUID) -> list[Message]:
+def list_messages(
+    db: DbSession, session_id: uuid.UUID, limit: int, offset: int = 0
+) -> list[Message]:
+    """A page of the transcript, oldest first.
+
+    Bounded because a long conversation would otherwise serialize in full on
+    every open -- and the client only ever renders the recent end of it.
+    """
     rows = (
         db.execute(
             select(Message)
             .where(Message.session_id == session_id)
             .order_by(Message.created_at.asc())
+            .limit(limit)
+            .offset(offset)
         )
         .scalars()
         .all()

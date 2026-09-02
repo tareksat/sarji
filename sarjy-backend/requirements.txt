@@ -1,7 +1,14 @@
-fastapi
-uvicorn[standard]
-sqlalchemy>=2.0
-psycopg[binary]
-pydantic-settings
-openai-agents
-httpx
+# Pinned. `deploy.sh` rebuilds the image on every deploy, and `openai-agents` is
+# pre-1.0 with a transitive `mcp` constraint of its own, so an unpinned rebuild
+# months from now can pull a different agents SDK and a different MCP protocol
+# version than sarjy-mcp-server was built against -- breaking a running site on
+# a deploy that changed no source, with nothing to roll back to.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+sqlalchemy==2.0.52
+psycopg[binary]==3.3.4
+pydantic==2.13.5
+pydantic-settings==2.15.0
+openai==3.6.0
+openai-agents==0.22.0
+httpx==0.28.1

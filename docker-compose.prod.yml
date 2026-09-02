@@ -41,6 +41,30 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
+    # The likeliest thing to exhaust a 2 GB droplet. Unbounded, the kernel's OOM
+    # killer chooses by score and can pick Postgres instead -- which restarts
+    # silently mid-write under `restart: unless-stopped`.
+    mem_limit: 1g
+    healthcheck:
+      # The proxy takes tens of seconds to be ready. Without this, `backend`
+      # depends on it having merely *started* and the first turns fail against a
+      # process that is not listening yet.
+      #
+      # Four ways to make one HTTP request, because this is someone else's image
+      # and which client it ships is not ours to assume. A `backend` that waits
+      # on `service_healthy` never starts if the probe itself is broken, so the
+      # probe must not depend on a single binary being present.
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness',timeout=3)"
+          || python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness',timeout=3)"
+          || curl -fsS http://127.0.0.1:4000/health/liveliness
+          || wget -qO- http://127.0.0.1:4000/health/liveliness
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
   mcp:
     build:
@@ -50,9 +74,9 @@ services:
       MCP_SERVER_HOST: 0.0.0.0
       MCP_SERVER_PORT: "8100"
     healthcheck:
-      # The endpoint speaks MCP, not plain HTTP, so this only proves the port is
-      # bound — which is what the API's startup connect needs.
-      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8100), timeout=3)"]
+      # An MCP initialize handshake, not a bare TCP connect: a hung server still
+      # holds its socket open, and the API's own health check cannot see that.
+      test: ["CMD", "python", "healthcheck.py"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -62,7 +86,13 @@ services:
       context: ./sarjy-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+psycopg://sarjy:${POSTGRES_PASSWORD}@postgres:5432/sarjy
+      # Discrete parts, not an interpolated DSN: compose does not URL-encode
+      # what it substitutes, so a hand-chosen password containing @ / : or #
+      # would parse as a different host or database.
+      POSTGRES_USER: sarjy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: sarjy
       MCP_SERVER_URL: http://mcp:8100/mcp
       # Provider selection stays a LiteLLM model_name: gpt-4o-mini, groq-oss or
       # gemini-flash, from litellm/config.yaml.
@@ -80,7 +110,7 @@ services:
       mcp:
         condition: service_healthy
       litellm:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
       interval: 5s
