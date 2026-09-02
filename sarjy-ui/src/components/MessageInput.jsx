@@ -1,12 +1,20 @@
 import { useState } from 'react';
 import { MicIcon, SendIcon, SpeakerOffIcon, SpeakerOnIcon } from './icons';
 
+// Hands-free (the infinity toggle) keeps the microphone open between turns and
+// arms barge-in. Turned off for now: flip this back to true to restore it —
+// nothing else about the feature was removed, and with the toggle gone
+// `handsFree` in App.jsx stays false, so the hot mic never opens.
+const HANDS_FREE_ENABLED = false;
+
 export default function MessageInput({
   onSend,
   disabled,
   micSupported,
   micState,
   onMicToggle,
+  handsFree,
+  onHandsFreeToggle,
   muted,
   onMuteToggle,
 }) {
@@ -44,6 +52,17 @@ export default function MessageInput({
         >
           <span className="mic-ring" />
           <MicIcon className="mic-icon" />
+        </button>
+      )}
+
+      {micSupported && HANDS_FREE_ENABLED && (
+        <button
+          className={`icon-btn hands-free-btn ${handsFree ? 'active' : ''}`}
+          onClick={onHandsFreeToggle}
+          title={handsFree ? 'Hands-free on — speak any time to interrupt' : 'Hands-free off'}
+          aria-pressed={handsFree}
+        >
+          ∞
         </button>
       )}
 

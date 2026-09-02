@@ -103,8 +103,68 @@
               }
             }
           },
+          "429": {
+            "description": "The local token bucket would have queued this turn past its cap.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "502": {
             "description": "The model could not be reached, even after retries.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chat/stream": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Send a message and stream Sarjy's reply",
+        "description": "Run one conversational turn, streamed.\n\nIdentical to `POST /api/chat` in what it persists; the difference is that\ntokens are emitted as they arrive, so the browser can begin speaking at the\nfirst sentence boundary rather than at the last token. Frames are\n`data: {json}` and carry `type` of `delta`, `done`, or `error`; failures\narrive as an `error` frame with HTTP 200, since the response has usually\nalready begun by then.",
+        "operationId": "chat_stream_api_chat_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "A `text/event-stream` of `delta` frames, then one `done` frame.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "A path or query id is not a UUID.",
             "content": {
               "application/json": {
                 "schema": {
@@ -479,6 +539,28 @@
             "type": "string",
             "title": "Reply",
             "description": "Sarjy's reply. Spoken aloud by the client unless muted."
+          },
+          "timings": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timings",
+            "description": "Server-side spans for this turn, in milliseconds: `db_read_ms`, `db_write_ms`, `limiter_wait_ms`, `llm_total_ms`, `llm_ttft_ms` (null unless streamed) and `total_ms`. Present so the client can attribute latency without server access."
           }
         },
         "type": "object",

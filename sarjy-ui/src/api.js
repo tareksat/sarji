@@ -21,7 +21,40 @@ export async function sendMessage(userId, sessionId, message) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user_id: userId, session_id: sessionId, message }),
-  }); // { reply: string }
+  }); // { reply: string, timings: object | null }
+}
+
+// SSE over POST, so `fetch` rather than `EventSource` (which is GET-only).
+export async function sendMessageStream(userId, sessionId, message, handlers = {}) {
+  const { onDelta, onDone, onError } = handlers;
+  const res = await fetch('/api/chat/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId, session_id: sessionId, message }),
+  });
+  if (!res.ok || !res.body) throw new Error(`Request failed: ${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // Frames are separated by a blank line; a partial frame stays in `buffer`.
+    let split;
+    while ((split = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, split).trim();
+      buffer = buffer.slice(split + 2);
+      if (!frame.startsWith('data:')) continue;
+      const event = JSON.parse(frame.slice(5).trim());
+      if (event.type === 'delta') onDelta?.(event.text);
+      else if (event.type === 'done') onDone?.(event);
+      else if (event.type === 'error') onError?.(new Error(event.detail));
+    }
+  }
 }
 
 export async function fetchSessions(userId) {
