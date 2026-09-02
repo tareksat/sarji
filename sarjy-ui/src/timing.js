@@ -10,8 +10,8 @@ export function createTurnTimer() {
       : null;
 
   return {
-    mark(name) {
-      if (marks[name] === undefined) marks[name] = performance.now();
+    mark(name, at = performance.now()) {
+      if (marks[name] === undefined) marks[name] = at;
     },
     setServer(timings) {
       server = timings ?? null;

@@ -205,9 +205,9 @@ export default function App() {
     [messages, cancelSpeech, updateActiveMessages, runSend]
   );
 
-  const handleSpeechEnd = useCallback(() => {
+  const handleSpeechEnd = useCallback((at) => {
     const timer = createTurnTimer();
-    timer.mark('speechEnd');
+    timer.mark('speechEnd', at);
     timerRef.current = timer;
   }, []);
 
