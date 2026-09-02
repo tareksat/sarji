@@ -111,8 +111,13 @@ the magnitude is.
 - **The database is ~6% and nets to zero.** Parallel reads are real — `db_read_ms` is 13.7 ms
   lower on the streamed path, p < 0.0001 — but the streamed path's extra pre-LLM commit hands
   it back: 22.8 ms of Postgres before the model against 21.3 ms (means).
-- **Network, TLS and the Caddy hop cost 58–117 ms.** That is `client_first_byte_ms` minus
-  `total_ms` at p50: 116.5 ms non-streamed, 58.0 ms streamed. No code in this repo touches it.
+- **Network, TLS and the Caddy hop cost 99–117 ms.** That is `client_total_ms` minus
+  `total_ms` at p50: 116.5 ms non-streamed, 98.6 ms streamed. `client_total_ms` is the right
+  mark on both sides — on the streamed path `total_ms` runs past the first byte to the end of
+  generation, so subtracting it from `client_first_byte_ms` understates the hop. The streamed
+  `client_total_ms` p50 of 523.7 ms is in [`runs/streaming-pooled.md`](runs/streaming-pooled.md);
+  on the non-streamed path `client_total_ms` equals `client_first_byte_ms`. No code in this
+  repo touches it.
 
 **Long reply (Table 2) — the streaming mechanism's fair test**
 
