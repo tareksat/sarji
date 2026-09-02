@@ -31,7 +31,7 @@ export function createTurnTimer() {
     },
     publish() {
       const line = this.segments();
-      // One JSON line per turn. `summarize_client_timings.py` reads these.
+      // One JSON line per turn, published for the live [sarjy-timing] readout.
       console.log(`[sarjy-timing] ${JSON.stringify(line)}`);
       return line;
     },
