@@ -184,18 +184,36 @@ if [ ! -f .env ]; then
     chmod 600 .env
 fi
 
+# set_env KEY VALUE [force]
+#
+# `force` means the value came from an explicit command-line flag, which beats
+# whatever is already in .env. Without it, `.env.example` shipping a real-looking
+# default (LLM_MODEL=groq-oss) made `--model gemini-flash` a silent no-op: the
+# existing value was not a recognised placeholder, so it was kept and nothing
+# said so.
 set_env() {
-    local key="$1" value="$2"
+    local key="$1" value="$2" force="${3:-0}"
     [ -n "$value" ] || return 0
     if grep -q "^${key}=" .env; then
         local current
         current="$(grep "^${key}=" .env | head -n1 | cut -d= -f2-)"
-        # Placeholders from .env.example count as unset.
-        case "$current" in
-            ''|sk-local|yourname.duckdns.org) ;;
-            *) return 0 ;;
-        esac
-        sed -i "s|^${key}=.*|${key}=${value}|" .env
+        if [ "$force" -ne 1 ]; then
+            # Placeholders from .env.example count as unset.
+            case "$current" in
+                ''|sk-local|yourname.duckdns.org) ;;
+                *) return 0 ;;
+            esac
+        elif [ "$current" = "$value" ]; then
+            return 0
+        else
+            log "Overriding ${key} in .env (was '${current}')"
+        fi
+        # awk, not sed: the replacement is arbitrary user input, and every sed
+        # delimiter -- | included, reachable via --groq-key or --domain -- is a
+        # character some value can legitimately contain. awk takes the value as
+        # data rather than as part of the expression.
+        awk -v key="$key" -v value="$value" 'index($0, key "=") == 1 { print key "=" value; next } { print }' .env > .env.tmp && mv .env.tmp .env
+        chmod 600 .env
     else
         echo "${key}=${value}" >> .env
     fi
@@ -212,9 +230,12 @@ if [ -z "$SITE_DOMAIN" ]; then
 fi
 [ -n "$SITE_DOMAIN" ] || die "SITE_DOMAIN is required — Caddy needs a real name to get a certificate"
 
-set_env SITE_DOMAIN      "$SITE_DOMAIN"
-set_env LLM_MODEL        "$LLM_MODEL"
-set_env GROQ_API_KEY     "$GROQ_API_KEY"
+# Explicit flags win over whatever .env already holds; the generated secrets
+# below must never overwrite an existing one, or the database becomes
+# unreachable and the proxy key stops matching.
+set_env SITE_DOMAIN      "$SITE_DOMAIN"  1
+set_env LLM_MODEL        "$LLM_MODEL"    1
+set_env GROQ_API_KEY     "$GROQ_API_KEY" 1
 set_env POSTGRES_PASSWORD "$(openssl rand -hex 16)"
 set_env LITELLM_MASTER_KEY "$(openssl rand -hex 32)"
 

@@ -29,6 +29,11 @@ COPY --from=ui /ui/dist /srv/backend/app/static
 COPY start.sh /srv/start.sh
 RUN chmod +x /srv/start.sh
 
+# Not root. `/srv/backend/logs` is not created here on purpose: LOG_DIR is unset
+# in this image, so the API logs to stdout, which is what the platform collects.
+RUN useradd --system --create-home --uid 10001 sarjy     && chown -R sarjy /srv /opt/litellm
+USER sarjy
+
 ENV PYTHONUNBUFFERED=1 \
     MCP_SERVER_HOST=127.0.0.1 \
     MCP_SERVER_PORT=8100 \

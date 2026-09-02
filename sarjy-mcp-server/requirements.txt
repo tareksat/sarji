@@ -1,6 +1,7 @@
 # Pinned: server.py imports mcp.server.mcpserver.MCPServer, which is 2.x only.
-# In the deployed image this package shares a site-packages with litellm, whose
-# resolution otherwise pulls mcp back to 1.x and breaks that import.
+# In the deployed image this package shares a site-packages with the backend,
+# whose openai-agents allows mcp<3; unpinned resolution can pull mcp back to 1.x
+# and break that import.
 mcp==2.1.1
-httpx
-pydantic-settings
+httpx==0.28.1
+pydantic-settings==2.15.0

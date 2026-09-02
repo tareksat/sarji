@@ -6,7 +6,26 @@
 # microphone access to the speech input on a secure origin.
 
 {$SITE_DOMAIN} {
-	encode gzip
+	# `encode gzip` on its own matches text/*, which includes text/event-stream.
+	# Compressing an event stream buys nothing, costs CPU per token, and makes
+	# whether a token reaches the browser promptly depend on the encoder's flush
+	# behaviour rather than on `flush_interval` alone.
+	encode gzip {
+		match {
+			header Content-Type text/html*
+			header Content-Type text/css*
+			header Content-Type text/plain*
+			header Content-Type application/json*
+			header Content-Type application/javascript*
+			header Content-Type image/svg+xml*
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
 
 	reverse_proxy ui:80 {
 		# The counterpart of `proxy_buffering off` in sarjy-ui/nginx.conf: without

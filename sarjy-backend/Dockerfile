@@ -12,5 +12,9 @@ COPY scripts/ ./scripts/
 
 ENV PYTHONUNBUFFERED=1
 
+# Not root. Nothing here needs it, and the process parses untrusted input.
+RUN useradd --system --create-home --uid 10001 sarjy && chown -R sarjy /srv
+USER sarjy
+
 EXPOSE 8000
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
