@@ -6,7 +6,7 @@ Usage:
 
 Each iteration uses a fresh session id so history length stays constant, and
 the first run is discarded as a warm-up. Covers the server and network
-segments only; the browser-side marks come from summarize_client_timings.py.
+segments.
 """
 
 import argparse

@@ -1,13 +1,21 @@
 """Summarize browser timing lines into the same p50/p95 table shape.
 
-Copy the `[sarjy-timing] {...}` lines out of the Chrome console into a file,
+Collect the `[sarjy-timing] {...}` lines from the Chrome console into a file,
 then:
 
-    python scripts/summarize_client_timings.py runs/baseline-client.txt
+    python scripts/summarize_client_timings.py runs/baseline-client.txt --source typed
 
-The browser marks (STT tail, time-to-first-audio) cannot be driven headlessly
-without changing the thing being measured, so they are collected by hand from
-ten real spoken turns on the deployed app.
+`--source` picks which turns to summarize, and the two kinds are not
+interchangeable. A typed turn can be driven by browser automation and gives
+`first_byte_ms` and `reply_complete_ms` exactly as a spoken turn does, because
+nothing after the request is sent depends on how the message was composed. It
+cannot give `stt_tail_ms` at all, and its `ttfa_ms` is measured from the request
+rather than from the end of speech - a different quantity that must not be
+reported as time-to-first-audio.
+
+A voice turn is still collected by hand: driving the microphone would change the
+thing being measured. Both kinds can share one file; `source` on each line keeps
+them apart.
 """
 
 import argparse
@@ -33,24 +41,37 @@ def main() -> None:
     parser.add_argument("--source", choices=["voice", "typed"], default="voice")
     args = parser.parse_args()
 
+    decoder = json.JSONDecoder()
     rows = []
+    skipped = 0
     for line in Path(args.path).read_text(encoding="utf-8").splitlines():
         marker = line.find(PREFIX)
         if marker == -1:
             continue
-        row = json.loads(line[marker + len(PREFIX):])
+        try:
+            # raw_decode stops at the end of the object, so anything the console
+            # appends after it (a source annotation, a timestamp) is ignored.
+            row, _ = decoder.raw_decode(line[marker + len(PREFIX):])
+        except json.JSONDecodeError:
+            skipped += 1
+            continue
         if row.get("source") == args.source:
             rows.append(row)
+
+    if skipped:
+        print(f"skipped {skipped} unparseable line(s)\n", file=sys.stderr)
 
     if not rows:
         print(f"No {args.source} turns found in {args.path}")
         sys.exit(1)
 
-    print("| Segment | p50 (ms) | p95 (ms) |")
-    print("|---|---:|---:|")
+    print("| Segment | p50 (ms) | p95 (ms) | N |")
+    print("|---|---:|---:|---:|")
     for name in SEGMENTS:
+        # Each segment is counted on its own: a turn that never started audio
+        # contributes to first_byte_ms but not to ttfa_ms.
         values = [r[name] for r in rows if isinstance(r.get(name), (int, float))]
-        print(f"| `{name}` | {percentile(values, 50)} | {percentile(values, 95)} |")
+        print(f"| `{name}` | {percentile(values, 50)} | {percentile(values, 95)} | {len(values)} |")
     print(f"\n{len(rows)} {args.source} turns.")
 
 
