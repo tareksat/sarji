@@ -55,16 +55,21 @@ A plain `@function_tool` implementation ships and deploys first. The MCP transpo
 
 ### Why this one
 
-Sarj builds voice products, and time-to-first-audio is the number a user actually feels. It is also the deep dive with a falsifiable outcome: either the number moved or it did not, and either way there is something specific to say about where the time went.
+Sarj builds voice products, and time-to-first-audio is the number a user actually feels. That number decomposes into three segments:
+
+1. **STT tail** — from the end of speech to the request leaving the browser. Owned by the browser's `SpeechRecognition` endpointing.
+2. **Backend segment** — from the request arriving to the first usable byte of reply. Owned by this repository: database reads, throttling, the model call, the tool transport.
+3. **TTS start** — from the first byte to audible speech. Owned by the browser's `SpeechSynthesis`.
+
+Segments 1 and 3 run locally in the browser, outside the code. Segment 2 is what the code owns, so that is what this study measures and optimizes. The client-side marks still exist — the UI shows a live per-turn waterfall of all three segments — but they are instrumentation for the demo, not study data: they need a human at a microphone, which caps the sample size and makes the number unreproducible for a reviewer.
+
+The backend segment also has a falsifiable outcome: either the number moved or it did not, and either way there is something specific to say about where the time went.
 
 ### Hypothesis
 
-I expect time-to-first-audio to be dominated by two things, neither of which is audio:
+I expect the backend segment to be dominated by the model call, and I expect the largest structural win to come from streaming: if the reply is returned whole, the first usable byte arrives at the last token; streamed, it arrives at the first.
 
-1. **A request/response turn.** If the reply is returned whole, the user waits for the last token before hearing the first word. Streaming should be the single largest win.
-2. **Speech endpointing.** `SpeechRecognition` waits for silence before emitting a final transcript, which can spend a second of dead air before the request is even sent — time no backend work can recover.
-
-Secondary cost centres I expect to find: database round-trips serialised ahead of the model call, throttling that makes callers wait rather than rejecting them, and a system prompt that grows with every memory fact ever saved.
+Secondary cost centres I expect to find: database round-trips serialised ahead of the model call, throttling that makes callers wait rather than rejecting them, a system prompt that grows with every memory fact ever saved, and the transport hop MCP puts in front of every tool call.
 
 These are predictions. The measurements decide, and I would rather publish a hypothesis that turned out wrong than pretend I knew.
 
@@ -72,28 +77,30 @@ These are predictions. The measurements decide, and I would rather publish a hyp
 
 Instrument first, change nothing until there is a baseline.
 
-Client-side marks: speech end → request sent → first response byte → first audio.
-Server-side spans: database time, LLM time-to-first-token, total handler time.
+Server-side spans, returned with every response and logged: database read and write time, limiter wait, model time-to-first-token (streamed) or model total (non-streamed), total handler time. The harness adds two wall-clock marks of its own: time to first byte and time to the last byte, as seen by an HTTP client outside the deployment.
 
-Baseline is ten runs of a fixed prompt against the deployed application, not localhost, reported as p50 and p95 per segment. Every intervention is re-measured the same way.
+Every run is a fixed prompt against the deployed application, not localhost, so network and TLS are inside every number. Results are p50 and p95 per segment with the sample size stated next to them. The deployed limiter allows 20 requests a minute, so runs are five iterations each and pooled across invocations spaced a minute apart; raw invocations are kept alongside the pooled tables.
+
+Three prompts, fixed for the life of the study: a one-sentence answer, a four-sentence answer, and a weather question that forces a tool call.
 
 ### Planned interventions, in expected order of payoff
 
-1. Stream tokens over SSE; flush to speech at the first sentence boundary.
+1. Stream tokens over SSE, so the first usable byte is the first token rather than the last.
 2. Cap or remove the rate limiter's queue wait.
 3. Parallelize the pre-LLM reads; defer writes until after the response has started.
 4. Bound the injected memory facts and the history window.
-5. Tune STT endpointing so the final transcript arrives sooner.
-6. Warm the speech-synthesis voice list at page load.
-7. Compare Gemini against Groq on the same harness.
+5. Compare Gemini against Groq on the same harness.
+6. Measure the MCP transport's per-call cost against the same tool as a local function.
+
+Two client-side changes ship as product work rather than as measured interventions, because their effect lands in segments the study does not sample: finalizing the transcript at speech end instead of the silence timeout, and warming the speech-synthesis voice list at page load.
 
 ### Deliverable
 
-A before/after table by segment, including interventions that bought nothing. A change that failed to help is more informative than another win, and I would rather present the real distribution than a selected one.
+`docs/latency/REPORT.md`: one table per comparison — non-streamed against streamed on a short reply, the same on a long reply, Groq against Gemini, MCP against a local tool — with analysis and recommendations, including interventions that bought nothing. A change that failed to help is more informative than another win, and I would rather present the real distribution than a selected one.
 
 ### Honest caveat
 
-Browser TTS runs locally, so it is not the bottleneck — which means the number I am optimizing is mostly the LLM path. Worth stating plainly rather than letting it be discovered.
+This study stops at the first byte leaving the server. What the user hears also includes the browser's endpointing before the request and its synthesis after the reply, neither of which any change in this repository can move. The UI's live waterfall shows their share on every turn, so the reviewer can see how much of a felt delay this study could ever have addressed.
 
 ## 6. Architecture
 
@@ -104,7 +111,7 @@ Component map, request-flow sequence, and the database schema are in [`ARCHITECT
 Decisions worth stating up front:
 
 - **Model provider.** Gemini through its OpenAI-compatible endpoint, using `OpenAIChatCompletionsModel`, since the SDK's default Responses API is not implemented by Gemini, with tracing disabled. Base URL, key, and model name are env vars, so switching to Groq for the provider comparison is a config change, not a code change. This is config-driven, not an adapter layer — the abstraction would be indirection around a single live implementation.
-- **Transport.** `POST /api/chat` streams over SSE so speech can start on the first sentence rather than the last token.
+- **Transport.** `POST /api/chat/stream` emits the reply over SSE so the browser can start speaking at the first sentence rather than the last token. `POST /api/chat` returns the whole reply and is kept as the "before" column of the comparison.
 - **Serving.** FastAPI serves the built frontend, so the deployment is one origin and one URL — no CORS, and a link that opens with no setup.
 
 ## 7. Risks

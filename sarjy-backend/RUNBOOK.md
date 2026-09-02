@@ -55,16 +55,19 @@ MCP server run on loopback inside the same image.
 ## Latency harness
 
 ```
-python scripts/measure.py --base-url $SARJY_URL --label baseline
-python scripts/measure.py --base-url $SARJY_URL --label streaming --stream
-python scripts/summarize_client_timings.py ../docs/latency/runs/baseline-client.txt
+.venv/Scripts/python.exe scripts/measure.py --base-url $SARJY_URL --label baseline-1 --iterations 5
+.venv/Scripts/python.exe scripts/measure.py --base-url $SARJY_URL --label streaming-1 --iterations 5 --stream
+.venv/Scripts/python.exe scripts/pool_runs.py --label streaming streaming-1 streaming-2
 ```
 
-Ten turns of one fixed prompt, fresh session id each, warm-up discarded; writes
-a p50/p95 table to `docs/latency/runs/<label>.md`. The browser-side marks are
-collected by hand from the Chrome console (`[sarjy-timing]` lines) — driving
-them headlessly would change the thing being measured. Results live in
-[`../docs/latency/`](../docs/latency/).
+Five turns of one fixed prompt, fresh session id each, warm-up discarded;
+writes a p50/p95 table to `docs/latency/runs/<label>.md`. Five, because the
+deployed limiter allows 20 calls a minute and a 429 aborts the run — repeat the
+invocation a minute later under a `-2` suffix and pool the two with
+`pool_runs.py`. The study covers server-side spans and the harness's own
+first-byte and last-byte marks; the browser's `[sarjy-timing]` console line and
+the on-screen waterfall are a live readout, not study data. Method, results and
+the reasons for the scope are in [`../docs/latency/REPORT.md`](../docs/latency/REPORT.md).
 
 ## Logs
 
@@ -96,6 +99,6 @@ them headlessly would change the thing being measured. Results live in
 
 **"Sarjy" not remembering things across sessions** — check `Saved memory for` lines fired during the conversation; if absent, the model chose not to call `save_memory` (facts, not small talk, trigger it).
 
-## No test suite
+## Tests
 
-Verify manually: hit `POST /api/chat` with `{user_id, session_id, message}`, watch `logs/app.log`.
+`tests/test_pool_runs.py` covers `scripts/pool_runs.py`; run with `pip install -r requirements-dev.txt` then `.venv/Scripts/python.exe -m pytest` from `sarjy-backend/`. Everything else: verify manually — hit `POST /api/chat` with `{user_id, session_id, message}`, watch `logs/app.log`.

@@ -18,14 +18,14 @@ graph TB
 
     subgraph Server[FastAPI]
         API[HTTP layer<br/>app/main.py]
-        CS[Chat service<br/>app/chat_service.py]
-        RL[Token-bucket limiter<br/>app/rate_limiter.py]
+        CS[Chat services<br/>app/services/chat.py<br/>app/services/streaming.py]
+        RL[Token-bucket limiter<br/>app/core/rate_limiter.py]
         AG[Agent<br/>app/agent/sarjy_agent.py]
     end
 
     PG[(Postgres<br/>users · sessions<br/>messages · memories)]
     LLM[LLM provider<br/>OpenAI-compatible endpoint]
-    MCP[MCP server<br/>weather · planned]
+    MCP[MCP server<br/>sarjy-mcp-server · get_weather]
 
     STT -->|transcript| UI
     UI -->|reply text| TTS
@@ -37,7 +37,7 @@ graph TB
     CS <--> PG
     AG -->|save_memory writes| PG
     AG --> LLM
-    AG -.-> MCP
+    AG --> MCP
 ```
 
 Voice never leaves the browser. Both speech-to-text and text-to-speech run on
@@ -64,7 +64,7 @@ sequenceDiagram
     API->>DB: read last N messages for this session
     API->>DB: read all memories for this user
     API->>A: build agent with memories in the system prompt
-    Note over API: token-bucket limiter — waits, never rejects
+    Note over API: token-bucket limiter — queues up to a cap, then 429
     A->>P: chat completion + tool definitions
     opt model decides a fact is durable
         P-->>A: tool call save_memory(fact)
@@ -87,8 +87,9 @@ the deployed app can be attributed without server access.
 the same rows, but emits `text/event-stream` frames: one `delta` per token, then
 a single `done` frame with the full reply and the turn's timings. The browser
 speaks each completed sentence as it arrives instead of waiting for the last
-token, which is where the time-to-first-audio win comes from. Three things
-differ from the diagram above:
+token — a user-experience mechanism, not a latency optimization; measured
+first-byte timing shows no streaming win, see [`docs/latency/REPORT.md`](latency/REPORT.md).
+Three things differ from the diagram above:
 
 - The user message is **committed**, not flushed, before the reads — the history
   read runs in a separate Session and would not otherwise see it.
@@ -145,11 +146,9 @@ The distinction matters and is easy to miss when reading the schema.
 | Scope | One session | One user, all sessions |
 | Written by | Every turn, automatically | The model, by calling `save_memory` |
 | Read as | Conversation turns passed as `input` | Bullet list injected into the system prompt |
-| Bounded by | `chat_history_limit` (default 20) | Unbounded — every fact, every turn |
+| Bounded by | `chat_history_limit` (default 20) | `memory_facts_limit` (default 20, newest first) |
 
-"Remembers things across sessions" is the `memories` table. The unbounded read
-is deliberate for now and is one of the latency interventions: the system prompt
-grows with every fact ever saved.
+"Remembers things across sessions" is the `memories` table. The read is capped at the newest `memory_facts_limit` facts because every fact is injected into the system prompt on every turn; unbounded, the prompt grew with every fact ever saved.
 
 ## 5. Database schema
 
@@ -187,7 +186,7 @@ erDiagram
     }
 ```
 
-Defined in `sarjy-backend/app/models.py`.
+Defined in `sarjy-backend/app/models/`, one file per table.
 
 **`users`** — one row per browser that has ever sent a message. `id` is
 generated client-side and stored in `localStorage`; the server accepts it as
@@ -226,7 +225,7 @@ conversation must not delete what Sarjy learned from it.
 ## 6. Configuration
 
 All settings come from the environment via pydantic-settings
-(`app/config.py`), read from `.env`.
+(`app/core/config.py`), read from `.env`.
 
 | Setting | Default | Purpose |
 |---|---|---|
