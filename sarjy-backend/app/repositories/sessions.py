@@ -36,13 +36,17 @@ def get_or_create(
     client that supplies someone else's `session_id` writes into their
     conversation and gets its recent messages replayed back in the reply.
 
-    The row is added but not committed: the caller owns the transaction, so a
-    turn that fails before it is answered leaves no empty session behind.
+    The row is flushed but not committed: the caller owns the transaction, so a
+    turn that fails before it is answered leaves no empty session behind. The
+    flush is what puts this insert ahead of the message that references it --
+    the models carry no relationship(), so the unit of work orders the two
+    inserts by mapper name and would otherwise write the message first.
     """
     session = get(db, session_id)
     if session is None:
         session = SessionModel(id=session_id, user_id=user_id, title=title)
         db.add(session)
+        db.flush()
         return session
     if session.user_id != user_id:
         raise SessionOwnershipError(f"Session {session_id} belongs to another user")

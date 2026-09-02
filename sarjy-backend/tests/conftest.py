@@ -7,7 +7,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 
 import pytest  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy import create_engine, event  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
@@ -29,6 +29,14 @@ def session_factory():
         poolclass=StaticPool,
         future=True,
     )
+    # SQLite ignores foreign keys unless asked; Postgres does not. Without this
+    # the tests cannot see an insert that lands before the row it references.
+    @event.listens_for(engine, "connect")
+    def _enforce_foreign_keys(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     Base.metadata.create_all(bind=engine)
     yield sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     engine.dispose()
