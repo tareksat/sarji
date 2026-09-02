@@ -30,16 +30,13 @@ cd sarjy-backend
 
 | Label | Flags | Needs first |
 |---|---|---|
-| `baseline` | none (non-streaming `/api/chat`) | - |
-| `streaming` | `--stream` | - |
-| `limiter-capped`, `db-parallel`, `prompt-trimmed` | `--stream` | the change deployed |
-| `history-10` | `--stream` | `CHAT_HISTORY_LIMIT=10` deployed |
-| `provider-gemini` / `provider-groq` | `--stream` | `LLM_MODEL` changed + redeploy |
-| `tool-mcp` / `tool-local` | `--stream --prompt "What's the weather right now?"` | `USE_LOCAL_WEATHER_TOOL` false / true + redeploy |
+| `baseline-N` | none (non-streaming `/api/chat`) | - |
+| `streaming-N` | `--stream` | - |
+| `baseline-long-N` / `streaming-long-N` | as above, `--prompt "Describe Paris in exactly four sentences."` | - |
+| `provider-gemini-N` / `provider-groq-N` | `--stream` | `LLM_MODEL` changed on the droplet, `litellm` and `backend` recreated, model read back |
+| `tool-mcp-N` / `tool-local-N` | `--stream --prompt "What's the weather in Riyadh right now?"` | `USE_LOCAL_WEATHER_TOOL` false / true on the droplet, `backend` recreated, setting read back |
 
-Writes `docs/latency/runs/<label>.md`. Default prompt is
-`"In one sentence, what is the capital of France?"`, the one the methodology
-fixes on - do not vary it except for the weather runs.
+`N` is the invocation number. Pool with `scripts/pool_runs.py --label <label> <label>-1 <label>-2`, which writes `<label>-pooled.md`; that is the file the report cites.
 
 **A run whose config was not actually changed is not a comparison.** For the
 `provider-*` and `tool-*` labels, confirm the deployed env changed and the
@@ -84,11 +81,10 @@ table, analysis, recommendations. Raw run files live beside it in
 `docs/latency/runs/` and the report cites them - keep every run file, and keep the
 report short enough to read in one sitting.
 
-When several invocations of one label are pooled, write the aggregate to
-`runs/<label>-pooled.md` and leave `runs/<label>.md` alone: `measure.py` writes
-`<label>.md` and will overwrite it on the next run, so only the `-pooled` name is
-safe to hand-maintain. Say in its header how many invocations it pools and when,
-and carry every raw iteration in its `json` block so the table can be recomputed.
+`measure.py` overwrites `<label>.md` on every run, so raw invocations carry a
+`-N` suffix and `pool_runs.py` writes the only hand-safe file, `<label>-pooled.md`.
+Its header names the invocations pooled and their sizes, and its `json` block
+carries every raw row so the table can be recomputed.
 
 Update the header metadata each time (target, date, `git rev-parse --short HEAD`,
 and the deployed `LLM_MODEL`, which nothing exposes over HTTP: ask, or record it
@@ -111,3 +107,4 @@ and a segment the endpoint never emits is `n/a`, never 0.
 | 10 iterations for two back-to-back runs | 429 aborts the second run |
 | Reading `-` as a measured zero | Reports a segment that was never sampled |
 | Expecting a seeded memory on a weather run | `measure.py:115` mints a fresh random `user_id` per invocation, so nothing was remembered |
+| Flipping `USE_LOCAL_WEATHER_TOOL` before it was in the compose `environment` block | The container never sees it; both halves measure MCP |

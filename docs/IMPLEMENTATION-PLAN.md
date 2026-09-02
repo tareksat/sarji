@@ -5,6 +5,8 @@ latency deep dive done. The *what* and *why* are in [`PRD.md`](PRD.md); the
 shape of the system is in [`ARCHITECTURE.md`](ARCHITECTURE.md). This document
 is only the sequence.
 
+> Written before the deep dive was narrowed to the backend segment. Phases 8 to 10 still describe client-side marks and a time-to-first-audio deliverable; the scope that shipped is in [`PRD.md`](PRD.md) section 5 and the results in [`latency/REPORT.md`](latency/REPORT.md). Kept as the build order it was, not edited to match.
+
 ## Two rules the order obeys
 
 **Deploy before there is anything to lose.** Phase 0 puts a trivial but real
