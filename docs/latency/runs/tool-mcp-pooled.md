@@ -7,15 +7,15 @@
 
 | Segment | p50 (ms) | p95 (ms) |
 |---|---:|---:|
-| `db_read_ms` | 6.1 | 10.0 |
-| `db_write_pre_ms` | 14.0 | 32.4 |
+| `db_read_ms` | 6.0 | 10.0 |
+| `db_write_pre_ms` | 13.3 | 32.4 |
 | `limiter_wait_ms` | 0.0 | 0.0 |
-| `llm_ttft_ms` | 950.1 | 2779.5 |
+| `llm_ttft_ms` | 910.3 | 2779.5 |
 | `llm_total_ms` | — | — |
-| `db_write_ms` | 8.2 | 9.0 |
-| `total_ms` | 1022.9 | 2844.5 |
-| `client_first_byte_ms` | 1055.4 | 2884.1 |
-| `client_total_ms` | 1152.0 | 3022.7 |
+| `db_write_ms` | 8.1 | 9.0 |
+| `total_ms` | 984.6 | 2844.5 |
+| `client_first_byte_ms` | 1049.7 | 2884.1 |
+| `client_total_ms` | 1127.1 | 3022.7 |
 
 Raw per-run values:
 

@@ -20,11 +20,11 @@ are reported alongside it.
 | `db_write_pre_ms` | — | — | — | — | — |
 | `limiter_wait_ms` | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
 | `llm_ttft_ms` | — | — | — | — | — |
-| `llm_total_ms` | 362.6 | 529.6 | 351.7 | 161.1 | 595.2 |
-| `db_write_ms` | 8.3 | 18.9 | 9.7 | 5.3 | 22.0 |
-| `total_ms` | 397.6 | 567.3 | 384.2 | 191.1 | 616.1 |
-| `client_first_byte_ms` | 514.1 | 689.1 | 498.4 | 291.5 | 741.7 |
-| `client_total_ms` | 514.1 | 689.1 | 498.4 | 291.5 | 741.7 |
+| `llm_total_ms` | 360.9 | 529.6 | 351.7 | 161.1 | 595.2 |
+| `db_write_ms` | 8.1 | 18.9 | 9.7 | 5.3 | 22.0 |
+| `total_ms` | 396.5 | 567.3 | 384.2 | 191.1 | 616.1 |
+| `client_first_byte_ms` | 511.2 | 689.1 | 498.4 | 291.5 | 741.7 |
+| `client_total_ms` | 511.2 | 689.1 | 498.4 | 291.5 | 741.7 |
 
 Raw per-run values (all 26 iterations):
 
