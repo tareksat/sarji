@@ -5,21 +5,30 @@ const SpeechRecognitionImpl =
     ? window.SpeechRecognition || window.webkitSpeechRecognition
     : null;
 
-// How long silence has to last before the turn is treated as finished. Chrome
-// fires `speechend` at any gap its VAD reads as silence — a breath, a comma, a
-// "uhh" — so finalizing there cuts the speaker off mid-sentence. This window is
-// what separates a pause from an ending, and it is the latency/robustness dial.
+// How long transcript activity has to be quiet before the turn is treated as
+// finished. Measured from the last `result` event, not from `speechend`: in
+// continuous mode Chrome does not fire `speechend` at pauses, only once, right
+// before `end`, when the engine itself gives up tens of seconds later. Results
+// (interim or final) are the one signal that arrives while the user is talking,
+// so their absence is the pause. This window is what separates a pause from an
+// ending, and it is the latency/robustness dial.
 const SILENCE_GRACE_MS = 1000;
 
 // Once recognition has been stopped, how long to wait for the engine's own
 // final result before falling back to the last interim transcript.
 const INTERIM_FALLBACK_MS = 600;
 
+// How long an open microphone waits for the first result before giving up. A
+// mic pressed by mistake, or a room that stays quiet, must not stay hot until
+// Chrome's own timeout. The turn is discarded, not sent: there is nothing in it.
+const NO_SPEECH_MS = 8000;
+
 export function useSpeechRecognition(onResult, { onSpeechEnd, onSpeechStart } = {}) {
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef(null);
   const interimTimeoutRef = useRef(null);
   const endpointTimeoutRef = useRef(null);
+  const noSpeechTimeoutRef = useRef(null);
   // Set by `cancel`, read by `onend`: the difference between stopping the
   // microphone and stopping it while throwing the utterance away.
   const discardRef = useRef(false);
@@ -50,6 +59,10 @@ export function useSpeechRecognition(onResult, { onSpeechEnd, onSpeechStart } = 
     let finals = '';
     let interim = '';
     let sent = false;
+    // Set once `finalize` has asked the engine to stop. The engine flushes a
+    // last final result on the way out, and that flush must not restart the
+    // silence window and schedule a second finalize.
+    let stopping = false;
 
     const send = (transcript) => {
       const text = transcript.trim();
@@ -63,10 +76,23 @@ export function useSpeechRecognition(onResult, { onSpeechEnd, onSpeechStart } = 
       endpointTimeoutRef.current = null;
     };
 
+    const cancelNoSpeech = () => {
+      window.clearTimeout(noSpeechTimeoutRef.current);
+      noSpeechTimeoutRef.current = null;
+    };
+
+    const clearTimers = () => {
+      cancelEndpoint();
+      cancelNoSpeech();
+      window.clearTimeout(interimTimeoutRef.current);
+      interimTimeoutRef.current = null;
+    };
+
     // `pauseStartedAt` is when the silence began, not when it was judged to be
     // an ending, so the turn timer measures what the user actually waited.
     const finalize = (pauseStartedAt) => {
       endpointTimeoutRef.current = null;
+      stopping = true;
       onSpeechEndRef.current?.(pauseStartedAt);
       // Forces the engine to flush its final result now rather than after its
       // own timeout. The final usually still wins the race below; the interim
@@ -78,17 +104,34 @@ export function useSpeechRecognition(onResult, { onSpeechEnd, onSpeechStart } = 
       );
     };
 
+    // Restarts the silence window from `at`, the last moment speech was known
+    // to be in flight.
+    const armEndpoint = (at) => {
+      if (stopping) return;
+      cancelEndpoint();
+      endpointTimeoutRef.current = window.setTimeout(() => finalize(at), SILENCE_GRACE_MS);
+    };
+
+    recognition.onstart = () => {
+      cancelNoSpeech();
+      noSpeechTimeoutRef.current = window.setTimeout(() => {
+        noSpeechTimeoutRef.current = null;
+        discardRef.current = true;
+        recognition.abort();
+      }, NO_SPEECH_MS);
+    };
+
     recognition.onresult = (event) => {
+      cancelNoSpeech();
       interim = '';
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const result = event.results[i];
         if (result.isFinal) finals += result[0].transcript;
         else interim += result[0].transcript;
       }
-      // Live interim text means speech is still in flight. A result carrying
-      // only finals is the engine flushing an already-finished segment, which
-      // must not reset a pause that is already being timed.
-      if (interim) cancelEndpoint();
+      // Any result, interim or final, is the engine still hearing something.
+      // The pause is measured from the last one.
+      armEndpoint(performance.now());
     };
 
     recognition.onspeechstart = () => {
@@ -96,21 +139,19 @@ export function useSpeechRecognition(onResult, { onSpeechEnd, onSpeechStart } = 
       onSpeechStartRef.current?.();
     };
 
+    // Rarely fires in continuous mode, but when it does it is the same fact as
+    // a result going quiet, and it is the only signal in an engine that does
+    // not deliver interim results.
     recognition.onspeechend = () => {
-      const pauseStartedAt = performance.now();
-      cancelEndpoint();
-      endpointTimeoutRef.current = window.setTimeout(
-        () => finalize(pauseStartedAt),
-        SILENCE_GRACE_MS
-      );
+      armEndpoint(performance.now());
     };
 
     recognition.onend = () => {
-      cancelEndpoint();
-      window.clearTimeout(interimTimeoutRef.current);
+      clearTimers();
       if (!sent && !discardRef.current) send(finals + interim);
       discardRef.current = false;
       sent = false;
+      stopping = false;
       finals = '';
       interim = '';
       setListening(false);
@@ -118,16 +159,15 @@ export function useSpeechRecognition(onResult, { onSpeechEnd, onSpeechStart } = 
     recognition.onerror = (event) => {
       // A queued `finalize` would otherwise still fire and announce a speech
       // end for a turn that is not happening.
-      cancelEndpoint();
-      window.clearTimeout(interimTimeoutRef.current);
+      clearTimers();
+      stopping = false;
       setLastError(event?.error ?? 'unknown');
       setListening(false);
     };
 
     recognitionRef.current = recognition;
     return () => {
-      window.clearTimeout(interimTimeoutRef.current);
-      window.clearTimeout(endpointTimeoutRef.current);
+      clearTimers();
       recognition.abort();
     };
   }, []);
@@ -152,6 +192,7 @@ export function useSpeechRecognition(onResult, { onSpeechEnd, onSpeechStart } = 
   const stop = useCallback(() => {
     if (!recognitionRef.current) return;
     window.clearTimeout(endpointTimeoutRef.current);
+    window.clearTimeout(noSpeechTimeoutRef.current);
     recognitionRef.current.stop();
     setListening(false);
   }, []);
@@ -160,6 +201,7 @@ export function useSpeechRecognition(onResult, { onSpeechEnd, onSpeechStart } = 
   const cancel = useCallback(() => {
     if (!recognitionRef.current) return;
     window.clearTimeout(endpointTimeoutRef.current);
+    window.clearTimeout(noSpeechTimeoutRef.current);
     window.clearTimeout(interimTimeoutRef.current);
     discardRef.current = true;
     recognitionRef.current.abort();
