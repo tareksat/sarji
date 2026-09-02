@@ -42,6 +42,9 @@ first run prints the deploy key and exits if the key is not yet on the GitHub
 repo. The manual runbook below is what it automates, and remains the reference
 when something fails.
 
+Redeploys after that are `deploy.sh`, documented under
+[Operations](#operations) — `droplet-init.sh` is only for the first run.
+
 ## Runbook
 
 ### 1. Droplet
@@ -155,11 +158,33 @@ component most likely to push it over.
 ```
 docker compose -f docker-compose.prod.yml logs -f backend    # follow API logs
 docker compose -f docker-compose.prod.yml ps                 # service health
-git pull && docker compose -f docker-compose.prod.yml up -d --build   # deploy
 ```
 
+### Redeploying
+
+`deploy.sh` at the repo root is the deploy command. It takes the branch to
+deploy, defaulting to `main`:
+
+```
+cd /opt/sarjy
+./deploy.sh              # deploy main
+./deploy.sh deep-dive    # deploy a named branch
+```
+
+It fetches, puts the host on `origin/<branch>` with `git reset --hard`, stops the
+stack with `down --remove-orphans`, brings it back with `up -d --build`, and then
+waits for `/api/health/full` to answer from inside the backend container before
+declaring the deploy good. On timeout it prints the backend log tail and exits
+non-zero.
+
+The reset is destructive to the host's working tree by design — what runs is
+exactly what is on origin — so the script stops for confirmation when the tree is
+dirty. `--yes` skips that prompt for unattended runs, `--no-build` restarts
+without rebuilding, and `--dir` points at a checkout elsewhere than `/opt/sarjy`.
+
 The database lives in the `sarjy_pgdata` volume and the certificate in
-`caddy_data`; neither is touched by a rebuild.
+`caddy_data`; neither is touched by a rebuild, and `deploy.sh` never passes `-v`
+to `down`. Nothing deletes them short of `docker compose ... down -v` by hand.
 
 ## If $0 becomes a hard requirement
 
