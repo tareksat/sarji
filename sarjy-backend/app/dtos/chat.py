@@ -1,4 +1,7 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# Roughly a long email. Well above any spoken turn, well below a context limit.
+MESSAGE_MAX_LENGTH = 8000
 
 
 class ChatRequest(BaseModel):
@@ -20,7 +23,21 @@ class ChatRequest(BaseModel):
             "not exist server-side yet."
         )
     )
-    message: str = Field(description="The user's turn, typed or transcribed.")
+    # Bounded because it is stored, replayed into the next `chat_history_limit`
+    # turns, and sent to the model: an unbounded body is a context-limit error
+    # and a large bill, and an empty one buys a real model call for nothing.
+    message: str = Field(
+        min_length=1,
+        max_length=MESSAGE_MAX_LENGTH,
+        description="The user's turn, typed or transcribed.",
+    )
+
+    @field_validator("message")
+    @classmethod
+    def _not_only_whitespace(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("message must not be blank")
+        return value
 
 
 class ChatResponse(BaseModel):

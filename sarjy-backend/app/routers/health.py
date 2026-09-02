@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 from collections.abc import Awaitable, Callable
 
@@ -12,6 +13,7 @@ from ..core.config import settings
 from ..core.db import engine
 from ..dtos import DependencyHealth, FullHealthResponse
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])
 
 
@@ -29,18 +31,20 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-DETAIL_MAX_CHARS = 200
+def _summarize(name: str, exc: Exception) -> str:
+    """Name the failure without quoting it.
+
+    This endpoint is unauthenticated, and psycopg and SQLAlchemy connection
+    errors routinely carry the DSN host, port and user in their text, while the
+    LiteLLM probe would surface the proxy's internal URL. The exception type is
+    enough to tell a wrong password from an unreachable host; the detail goes to
+    the log, where it is already scoped to whoever can read the logs.
+    """
+    logger.warning("Health probe %s failed", name, exc_info=exc)
+    return type(exc).__name__
 
 
-def _summarize(exc: Exception) -> str:
-    """One readable line. SQLAlchemy in particular raises multi-line essays."""
-    message = " ".join(str(exc).split())
-    if len(message) > DETAIL_MAX_CHARS:
-        message = message[: DETAIL_MAX_CHARS - 1] + "…"
-    return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
-
-
-async def _probe(check: Callable[[], Awaitable[str | None]]) -> DependencyHealth:
+async def _probe(name: str, check: Callable[[], Awaitable[str | None]]) -> DependencyHealth:
     """Time one dependency check and turn any failure into a reportable status."""
     started = time.perf_counter()
     try:
@@ -51,7 +55,7 @@ async def _probe(check: Callable[[], Awaitable[str | None]]) -> DependencyHealth
         detail = f"timed out after {settings.health_check_timeout_seconds}s"
         status = "error"
     except Exception as exc:  # noqa: BLE001 - the point is to report, not to raise
-        detail = _summarize(exc)
+        detail = _summarize(name, exc)
         status = "error"
     elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
     return DependencyHealth(status=status, latency_ms=elapsed_ms, detail=detail)
@@ -81,8 +85,11 @@ async def _check_litellm() -> str | None:
 
 async def _check_mcp() -> str | None:
     """List the server's tools over the same session the agent uses, so a
-    session that has died since startup shows up here. The client is built
-    without `cache_tools_list`, so this really is a round-trip."""
+    session that has died since startup shows up here.
+
+    The client caches its tool list, so this can be answered from that cache --
+    it proves the session is live, not that the server is still responsive. The
+    container's own health check does the deeper probe."""
     tools = await sarjy_mcp_server.list_tools()
     return f"{len(tools)} tools"
 
@@ -118,7 +125,7 @@ async def health_full(response: Response) -> FullHealthResponse:
         checks["litellm"] = _check_litellm
 
     results = dict(
-        zip(checks, await asyncio.gather(*(_probe(check) for check in checks.values())))
+        zip(checks, await asyncio.gather(*(_probe(n, c) for n, c in checks.items())))
     )
 
     if not settings.llm_base_url:

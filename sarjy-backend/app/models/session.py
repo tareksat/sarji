@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Text, Uuid
+from sqlalchemy import DateTime, ForeignKey, Index, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..core.db import Base
@@ -10,6 +10,8 @@ from .base import now_utc
 
 class Session(Base):
     __tablename__ = "sessions"
+    # The sidebar reads this user's sessions ordered by `updated_at`.
+    __table_args__ = (Index("ix_sessions_user_updated", "user_id", "updated_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), index=True)

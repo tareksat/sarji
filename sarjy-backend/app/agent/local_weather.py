@@ -79,11 +79,16 @@ async def local_get_weather(location: str) -> str:
             )
             forecast_resp.raise_for_status()
             current = forecast_resp.json()["current"]
-    except httpx.HTTPError:
+
+        temperature = current["temperature_2m"]
+        description = WEATHER_CODE_DESCRIPTIONS.get(current["weather_code"], "unknown conditions")
+    except (httpx.HTTPError, ValueError, KeyError, IndexError):
+        # Not just HTTPError: Open-Meteo answers out-of-range coordinates with
+        # `{"error": true, ...}` and error pages with HTML, so the response
+        # parses fine and then KeyErrors on a field that is not there. Reading
+        # the fields inside the guard is the other half of that -- outside it,
+        # the same KeyError fails the whole turn as a 502.
         logger.exception("Weather lookup failed for location=%s", location)
         return "Weather lookup failed, please try again."
-
-    temperature = current["temperature_2m"]
-    description = WEATHER_CODE_DESCRIPTIONS.get(current["weather_code"], "unknown conditions")
 
     return f"It's {temperature}°C and {description} in {resolved_name} right now."

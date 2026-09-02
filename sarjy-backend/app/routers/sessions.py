@@ -23,6 +23,11 @@ SESSION_ID_PATH = Path(
     examples=["b74e2f10-8c3a-4d61-9f52-1a7e0c9d4b88"],
 )
 
+# Bounded pages. Neither list had a ceiling, so one long-lived user or one long
+# conversation was an unbounded serialization on every open.
+LIMIT_QUERY = Query(100, ge=1, le=500, description="Maximum rows to return.")
+OFFSET_QUERY = Query(0, ge=0, description="Rows to skip, for paging.")
+
 
 def _owned_session(db: DbSession, session_id: str, user_id: str) -> SessionModel:
     sid = parse_uuid(session_id, "session_id")
@@ -40,13 +45,19 @@ def _owned_session(db: DbSession, session_id: str, user_id: str) -> SessionModel
     response_description="Sessions, most recently active first.",
     responses={**BAD_UUID},
 )
-def list_sessions(user_id: str = USER_ID_QUERY, db: DbSession = Depends(get_db)):
-    """Return every session belonging to this user, ordered by `updated_at`
-    descending. Sessions with no messages yet do not appear, because their row
-    does not exist until the first turn.
+def list_sessions(
+    user_id: str = USER_ID_QUERY,
+    limit: int = LIMIT_QUERY,
+    offset: int = OFFSET_QUERY,
+    db: DbSession = Depends(get_db),
+):
+    """Return this user's sessions, ordered by `updated_at` descending.
+
+    Sessions with no messages yet do not appear, because their row does not
+    exist until the first turn.
     """
     uid = parse_uuid(user_id, "user_id")
-    return sessions_repo.list_for_user(db, uid)
+    return sessions_repo.list_for_user(db, uid, limit=limit, offset=offset)
 
 
 @router.get(
@@ -59,15 +70,17 @@ def list_sessions(user_id: str = USER_ID_QUERY, db: DbSession = Depends(get_db))
 def list_messages(
     session_id: str = SESSION_ID_PATH,
     user_id: str = USER_ID_QUERY,
+    limit: int = LIMIT_QUERY,
+    offset: int = OFFSET_QUERY,
     db: DbSession = Depends(get_db),
 ):
-    """Return the full transcript for one session, oldest first.
+    """Return a page of one session's transcript, oldest first.
 
-    This is the whole conversation, not the windowed slice replayed to the
+    This is the stored conversation, not the windowed slice replayed to the
     model on each turn -- that window is capped by `chat_history_limit`.
     """
     session = _owned_session(db, session_id, user_id)
-    return sessions_repo.list_messages(db, session.id)
+    return sessions_repo.list_messages(db, session.id, limit=limit, offset=offset)
 
 
 @router.patch(
