@@ -35,7 +35,7 @@ uvicorn app.main:app --reload --port 8000
 
 Config is env-driven via `app/core/config.py` (pydantic-settings, reads `.env`). Copy `.env.example` to `.env` and set `OPENAI_API_KEY`. No migrations tool — tables are created on startup via `Base.metadata.create_all` in the `lifespan` handler in `app/main.py`.
 
-No test suite exists yet.
+Tests: `pip install -r requirements-dev.txt`, then `.venv/Scripts/python.exe -m pytest` from `sarjy-backend/`.
 
 ### Architecture
 

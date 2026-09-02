@@ -99,6 +99,6 @@ the reasons for the scope are in [`../docs/latency/REPORT.md`](../docs/latency/R
 
 **"Sarjy" not remembering things across sessions** — check `Saved memory for` lines fired during the conversation; if absent, the model chose not to call `save_memory` (facts, not small talk, trigger it).
 
-## No test suite
+## Tests
 
-Verify manually: hit `POST /api/chat` with `{user_id, session_id, message}`, watch `logs/app.log`.
+`tests/test_pool_runs.py` covers `scripts/pool_runs.py`; run with `pip install -r requirements-dev.txt` then `.venv/Scripts/python.exe -m pytest` from `sarjy-backend/`. Everything else: verify manually — hit `POST /api/chat` with `{user_id, session_id, message}`, watch `logs/app.log`.

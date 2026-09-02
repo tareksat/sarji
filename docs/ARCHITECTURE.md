@@ -87,8 +87,9 @@ the deployed app can be attributed without server access.
 the same rows, but emits `text/event-stream` frames: one `delta` per token, then
 a single `done` frame with the full reply and the turn's timings. The browser
 speaks each completed sentence as it arrives instead of waiting for the last
-token, which is where the time-to-first-audio win comes from. Three things
-differ from the diagram above:
+token — a user-experience mechanism, not a latency optimization; measured
+first-byte timing shows no streaming win, see [`docs/latency/REPORT.md`](latency/REPORT.md).
+Three things differ from the diagram above:
 
 - The user message is **committed**, not flushed, before the reads — the history
   read runs in a separate Session and would not otherwise see it.

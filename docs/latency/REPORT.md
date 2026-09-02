@@ -9,7 +9,7 @@
 
 ## Method
 
-Three fixed prompts, a fresh session per turn so history length stays constant, warm-up discarded. Numbers come from `sarjy-backend/scripts/measure.py`; because the deployed limiter allows 20 requests a minute and a 429 aborts a run, each condition is pooled from invocations spaced 60 s apart — five turns each for Tables 2 to 4, and 5 + 8 + 8 + 5 for Table 1 — with `scripts/pool_runs.py`. Raw invocations and pooled tables are in [`runs/`](runs/).
+Three fixed prompts, a fresh session per turn so history length stays constant, warm-up discarded. Numbers come from `sarjy-backend/scripts/measure.py`; because the deployed limiter allows 20 requests a minute and a 429 aborts a run, each condition is pooled from invocations spaced 60 s apart — five turns each for Tables 2 to 4, pooled with `scripts/pool_runs.py`, and 5 + 8 + 8 + 5 for Table 1, whose pooled files were assembled by hand before that script existed. Raw invocations and pooled tables are in [`runs/`](runs/).
 
 | Prompt | Used by |
 |---|---|

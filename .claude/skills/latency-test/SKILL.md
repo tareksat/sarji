@@ -76,8 +76,8 @@ before writing anything down.
 
 ## Filling docs/latency
 
-`docs/latency/REPORT.md` is the one document: header, method, one measurement
-table, analysis, recommendations. Raw run files live beside it in
+`docs/latency/REPORT.md` is the one document: header, method, measurement
+tables (one per comparison), analysis, recommendations. Raw run files live beside it in
 `docs/latency/runs/` and the report cites them - keep every run file, and keep the
 report short enough to read in one sitting.
 
