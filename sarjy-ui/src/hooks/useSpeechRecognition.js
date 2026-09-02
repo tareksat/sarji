@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const SpeechRecognitionImpl =
   typeof window !== 'undefined'
@@ -20,6 +20,12 @@ export function useSpeechRecognition(onResult, { onSpeechEnd, onSpeechStart } = 
   const recognitionRef = useRef(null);
   const interimTimeoutRef = useRef(null);
   const endpointTimeoutRef = useRef(null);
+  // Set by `cancel`, read by `onend`: the difference between stopping the
+  // microphone and stopping it while throwing the utterance away.
+  const discardRef = useRef(false);
+  // The last error the engine reported, so hands-free does not re-arm into a
+  // permission failure forever.
+  const [lastError, setLastError] = useState(null);
   const onResultRef = useRef(onResult);
   const onSpeechEndRef = useRef(onSpeechEnd);
   const onSpeechStartRef = useRef(onSpeechStart);
@@ -102,13 +108,21 @@ export function useSpeechRecognition(onResult, { onSpeechEnd, onSpeechStart } = 
     recognition.onend = () => {
       cancelEndpoint();
       window.clearTimeout(interimTimeoutRef.current);
-      if (!sent) send(finals + interim);
+      if (!sent && !discardRef.current) send(finals + interim);
+      discardRef.current = false;
       sent = false;
       finals = '';
       interim = '';
       setListening(false);
     };
-    recognition.onerror = () => setListening(false);
+    recognition.onerror = (event) => {
+      // A queued `finalize` would otherwise still fire and announce a speech
+      // end for a turn that is not happening.
+      cancelEndpoint();
+      window.clearTimeout(interimTimeoutRef.current);
+      setLastError(event?.error ?? 'unknown');
+      setListening(false);
+    };
 
     recognitionRef.current = recognition;
     return () => {
@@ -118,23 +132,46 @@ export function useSpeechRecognition(onResult, { onSpeechEnd, onSpeechStart } = 
     };
   }, []);
 
-  const start = () => {
+  // Memoized: the hands-free effect depends on `start`, and a new identity every
+  // render re-runs it every render.
+  const start = useCallback(() => {
     if (!recognitionRef.current || listening) return;
+    setLastError(null);
     setListening(true);
-    recognitionRef.current.start();
-  };
+    try {
+      recognitionRef.current.start();
+    } catch {
+      // `InvalidStateError` when the engine has not finished stopping. The
+      // optimistic state has to be given back, or the UI shows a live
+      // microphone with nothing behind it.
+      setListening(false);
+    }
+  }, [listening]);
 
-  const stop = () => {
+  // Stops and delivers whatever has been transcribed.
+  const stop = useCallback(() => {
     if (!recognitionRef.current) return;
     window.clearTimeout(endpointTimeoutRef.current);
     recognitionRef.current.stop();
     setListening(false);
-  };
+  }, []);
+
+  // Stops and throws it away.
+  const cancel = useCallback(() => {
+    if (!recognitionRef.current) return;
+    window.clearTimeout(endpointTimeoutRef.current);
+    window.clearTimeout(interimTimeoutRef.current);
+    discardRef.current = true;
+    recognitionRef.current.abort();
+    setListening(false);
+  }, []);
 
   return {
     supported: !!SpeechRecognitionImpl,
     listening,
+    lastError,
     start,
     stop,
+    cancel,
   };
 }
