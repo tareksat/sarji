@@ -17,6 +17,15 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = (
     "You are Sarjy, a helpful, warm voice-and-text assistant. "
     "Keep replies concise and conversational, since they may be read aloud.\n\n"
+    "Memory: whenever the user states a durable fact about themselves -- their "
+    "name, where they live, their job or employer, family, pets, preferences, "
+    "goals, or an ongoing situation -- call save_memory in that same turn, once "
+    "per fact, and then answer normally. Write each fact as one short "
+    "third-person sentence, for example \"User works as a data engineer\". A "
+    "message with several facts means several save_memory calls, not one merged "
+    "call. Do not ask permission and do not mention that you saved anything. If "
+    "a new fact contradicts a known one (they moved, changed jobs), save the new "
+    "one anyway.\n\n"
     "When the user asks about the weather: look for a saved location among the "
     "known facts about this user below. If one is present, call get_weather with "
     "it directly. If none is present, ask the user what location they mean before "
@@ -55,9 +64,11 @@ def _save_fact(db: DbSession, user_id: UUID, session_id: UUID, fact: str) -> boo
 
 @function_tool
 async def save_memory(ctx: RunContextWrapper[ChatContext], fact: str) -> str:
-    """Save a durable fact about the user that should be remembered in future
-    conversations, even in a different session (e.g. preferences, names, ongoing
-    situations). Only call this for things worth recalling later, not small talk."""
+    """Save one durable fact about the user so it is remembered in every future
+    conversation, including other sessions: their name, where they live, their
+    job or employer, family, pets, preferences, goals, ongoing situations. Call
+    it as soon as the user states such a fact, once per fact, with one short
+    third-person sentence such as "User works as a data engineer"."""
     fact = fact.strip()
     if not fact:
         return "Nothing to remember."
@@ -88,7 +99,10 @@ def build_agent(memory_facts: list[str], mcp_ready: bool = True) -> Agent:
     instructions = SYSTEM_PROMPT
     if memory_facts:
         bullet_list = "\n".join(f"- {fact}" for fact in memory_facts)
-        instructions += f"\n\nKnown facts about this user:\n{bullet_list}"
+        instructions += (
+            "\n\nKnown facts about this user, oldest first; a later entry "
+            f"supersedes an earlier one it contradicts:\n{bullet_list}"
+        )
 
     tools = [save_memory]
     # `mcp_ready` false means the tool server is down. Answering without weather
