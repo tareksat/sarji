@@ -55,7 +55,9 @@ class ExplodingRun(FakeRun):
 def streamed(monkeypatch, session_factory):
     """Wire `stream_chat` to the in-memory database and a scripted model run."""
     monkeypatch.setattr(streaming, "SessionLocal", session_factory)
-    monkeypatch.setattr(streaming, "build_agent", lambda facts, mcp_ready=True: object())
+    monkeypatch.setattr(
+        streaming, "build_agent", lambda facts, mcp_ready=True, model=None: object()
+    )
 
     async def never_connected():
         return False

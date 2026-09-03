@@ -31,6 +31,13 @@ class ChatRequest(BaseModel):
         max_length=MESSAGE_MAX_LENGTH,
         description="The user's turn, typed or transcribed.",
     )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "LLM model override for this turn. Falls back to LLM_MODEL from the "
+            "server's env when omitted."
+        ),
+    )
 
     @field_validator("message")
     @classmethod

@@ -77,7 +77,7 @@ async def chat(req: ChatRequest, db: DbSession = Depends(get_db)):
     _assert_available(db, session_id, user_id)
 
     try:
-        reply, timings, tools_used = await handle_chat(db, user_id, session_id, req.message)
+        reply, timings, tools_used = await handle_chat(db, user_id, session_id, req.message, req.model)
     except RateLimitedError as exc:
         raise HTTPException(
             status_code=429,
@@ -119,7 +119,7 @@ async def chat_stream(req: ChatRequest, db: DbSession = Depends(get_db)):
     _assert_available(db, session_id, user_id)
 
     async def events():
-        async for event in stream_chat(db, user_id, session_id, req.message):
+        async for event in stream_chat(db, user_id, session_id, req.message, req.model):
             yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(

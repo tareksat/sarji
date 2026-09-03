@@ -80,7 +80,7 @@ async def _run_with_retry(agent, history: list[dict], context: ChatContext):
 
 
 async def handle_chat(
-    db: DbSession, user_id: uuid.UUID, session_id: uuid.UUID, message: str
+    db: DbSession, user_id: uuid.UUID, session_id: uuid.UUID, message: str, model: str | None = None
 ) -> tuple[str, dict[str, float | None], list[str]]:
     logger.info("handle_chat start user_id=%s session_id=%s", user_id, session_id)
     timings = Timings()
@@ -109,7 +109,7 @@ async def handle_chat(
     with timings.span("db_read_ms"):
         session, history, facts = await asyncio.to_thread(_read)
 
-    agent = build_agent(facts, mcp_ready=await mcp.ensure_connected())
+    agent = build_agent(facts, mcp_ready=await mcp.ensure_connected(), model=model)
     context = ChatContext(user_id=user_id, session_id=session_id)
 
     try:

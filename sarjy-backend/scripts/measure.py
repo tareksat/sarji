@@ -113,15 +113,22 @@ def stream_integrity_ok(deltas: list[str], reply: str) -> bool:
     return "".join(deltas) == reply
 
 
-def run_once(client: httpx.Client, user_id: str, prompt: str, stream: bool) -> dict:
+def run_once(
+    client: httpx.Client, user_id: str, prompt: str, stream: bool, model: str | None = None
+) -> dict:
     """One turn. Returns its timings, reply, tools and any failure found here.
 
     The `failures` list carries only what this function can see -- currently
     the stream-integrity check; the content, persistence and tool checks are
     applied by `evaluate`, which needs the prompt and a second HTTP call.
+
+    `model` overrides the server's default LLM for this turn (used by
+    `compare_models.py`); left unset, the server falls back to its own default.
     """
     session_id = str(uuid.uuid4())
     payload = {"user_id": user_id, "session_id": session_id, "message": prompt}
+    if model is not None:
+        payload["model"] = model
     started = time.perf_counter()
 
     if not stream:

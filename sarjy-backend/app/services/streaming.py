@@ -50,7 +50,7 @@ async def _load_context(
 
 
 async def stream_chat(
-    db: DbSession, user_id: uuid.UUID, session_id: uuid.UUID, message: str
+    db: DbSession, user_id: uuid.UUID, session_id: uuid.UUID, message: str, model: str | None = None
 ) -> AsyncIterator[dict]:
     """Run one turn, yielding token deltas as they arrive.
 
@@ -99,7 +99,7 @@ async def stream_chat(
     with timings.span("db_read_ms"):
         history, facts = await _load_context(session_id, user_id)
 
-    agent = build_agent(facts, mcp_ready=await mcp.ensure_connected())
+    agent = build_agent(facts, mcp_ready=await mcp.ensure_connected(), model=model)
     context = ChatContext(user_id=user_id, session_id=session_id)
 
     def _persist(reply: str) -> None:

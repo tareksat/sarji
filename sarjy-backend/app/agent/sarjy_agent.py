@@ -114,7 +114,7 @@ async def save_memory(ctx: RunContextWrapper[ChatContext], fact: str) -> str:
     return f"Remembered (shortened): {fact}" if shortened else f"Remembered: {fact}"
 
 
-def build_agent(memory_facts: list[str], mcp_ready: bool = True) -> Agent:
+def build_agent(memory_facts: list[str], mcp_ready: bool = True, model: str | None = None) -> Agent:
     instructions = SYSTEM_PROMPT
     if memory_facts:
         bullet_list = "\n".join(f"- {fact}" for fact in memory_facts)
@@ -135,7 +135,7 @@ def build_agent(memory_facts: list[str], mcp_ready: bool = True) -> Agent:
     return Agent(
         name="Sarjy",
         instructions=instructions,
-        model=settings.llm_model,
+        model=model or settings.llm_model,
         tools=tools,
         mcp_servers=mcp_servers,
     )
