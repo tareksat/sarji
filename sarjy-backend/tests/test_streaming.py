@@ -35,6 +35,15 @@ class FakeRun:
         self.cancelled = True
 
 
+class FakeToolCall:
+    """The one shape `tool_names_from` reads off a run's `new_items`."""
+
+    type = "tool_call_item"
+
+    def __init__(self, tool_name):
+        self.tool_name = tool_name
+
+
 class ExplodingRun(FakeRun):
     async def stream_events(self):
         for delta in self._deltas:
@@ -114,6 +123,31 @@ def test_a_tool_only_turn_does_not_write_a_null_reply(db, streamed):
     assert [e["type"] for e in events] == ["done"]
     assert events[-1]["reply"] == ""
     assert messages(db, session_id, "assistant") == [""]
+
+
+def test_the_done_frame_names_the_tools_the_turn_called(db, streamed):
+    user_id, session_id = uuid.uuid4(), uuid.uuid4()
+    run = streamed(FakeRun(["Sunny."]))
+    run.new_items = [FakeToolCall("get_weather"), FakeToolCall("save_memory")]
+
+    async def scenario():
+        return [e async for e in streaming.stream_chat(db, user_id, session_id, "Weather?")]
+
+    events = drive(scenario())
+
+    assert events[-1]["tools_used"] == ["get_weather", "save_memory"]
+
+
+def test_a_turn_that_called_nothing_reports_no_tools(db, streamed):
+    # `FakeRun` has no `new_items` at all, which is also what a run cut short
+    # before the SDK populated it looks like.
+    user_id, session_id = uuid.uuid4(), uuid.uuid4()
+    streamed(FakeRun(["Hello."]))
+
+    async def scenario():
+        return [e async for e in streaming.stream_chat(db, user_id, session_id, "Hi")]
+
+    assert drive(scenario())[-1]["tools_used"] == []
 
 
 def test_a_client_disconnect_persists_what_was_streamed(db, streamed):

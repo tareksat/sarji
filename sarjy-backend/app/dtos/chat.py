@@ -55,3 +55,11 @@ class ChatResponse(BaseModel):
             "attribute latency without server access."
         ),
     )
+    tools_used: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Names of the tools the model called during this turn, in call "
+            "order, local (`save_memory`) and MCP (`get_weather`) alike. Empty "
+            "when the turn was answered from the model alone."
+        ),
+    )

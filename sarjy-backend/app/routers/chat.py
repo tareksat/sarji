@@ -77,7 +77,7 @@ async def chat(req: ChatRequest, db: DbSession = Depends(get_db)):
     _assert_available(db, session_id, user_id)
 
     try:
-        reply, timings = await handle_chat(db, user_id, session_id, req.message)
+        reply, timings, tools_used = await handle_chat(db, user_id, session_id, req.message)
     except RateLimitedError as exc:
         raise HTTPException(
             status_code=429,
@@ -91,7 +91,7 @@ async def chat(req: ChatRequest, db: DbSession = Depends(get_db)):
         logger.warning("Returning 502 for user_id=%s session_id=%s: %s", user_id, session_id, exc)
         raise HTTPException(status_code=502, detail=str(exc))
 
-    return ChatResponse(reply=reply, timings=timings)
+    return ChatResponse(reply=reply, timings=timings, tools_used=tools_used)
 
 
 @router.post(
@@ -111,7 +111,8 @@ async def chat_stream(req: ChatRequest, db: DbSession = Depends(get_db)):
     already begun by then.
 
     Both `done` and `error` are terminal: exactly one of them ends the stream,
-    and no `done` follows an `error`.
+    and no `done` follows an `error`. The `done` frame carries the same
+    `reply`, `timings` and `tools_used` fields as the non-streamed response.
     """
     user_id = parse_uuid(req.user_id, "user_id")
     session_id = parse_uuid(req.session_id, "session_id")

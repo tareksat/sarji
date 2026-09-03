@@ -52,7 +52,7 @@ Request flow (`app/services/chat.py::handle_chat`, and `app/services/streaming.p
 5. Retry on `openai.RateLimitError` using `llm_retry_backoff_seconds` (`_run_with_retry`); any other exception rolls back the DB transaction and surfaces as `LLMUnavailableError` -> HTTP 502.
 6. Persist the assistant reply and commit.
 
-Every turn is instrumented with `app/core/timing.py::Timings` — named spans returned on the wire and logged (`db_read_ms`, `db_write_pre_ms`, `limiter_wait_ms`, `llm_ttft_ms`, `llm_total_ms`, `db_write_ms`, `total_ms`). `llm_ttft_ms` exists only on the streamed path; `llm_total_ms` only on the non-streamed one. The harness that turns these into p50/p95 tables is `scripts/measure.py`, with results in `docs/latency/`.
+Every turn is instrumented with `app/core/timing.py::Timings` — named spans returned on the wire and logged (`db_read_ms`, `db_write_pre_ms`, `limiter_wait_ms`, `llm_ttft_ms`, `llm_total_ms`, `db_write_ms`, `total_ms`). `llm_ttft_ms` exists only on the streamed path; `llm_total_ms` only on the non-streamed one. The harness that turns these into p50/p95 tables is `scripts/measure.py`, with results in `docs/latency/`. It also validates every measured turn — stream integrity, a per-prompt content validator, a read-back of both messages through `/api/sessions`, and `tools_used` for the weather prompt. Failed turns stay in the raw dump but are excluded from the percentiles, and the run exits non-zero.
 
 A process-local `TokenBucketRateLimiter` (`app/core/rate_limiter.py`) throttles outbound LLM calls to `llm_rate_limit_per_minute`. It queues rather than rejecting, but only up to `llm_rate_limit_max_wait_seconds`; past that it raises `RateLimitedError`, which becomes a 429 with `Retry-After` or an `error` frame.
 

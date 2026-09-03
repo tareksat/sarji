@@ -1,0 +1,105 @@
+# Correctness smoke test for the latency harness, not a latency benchmark.
+#
+# It brings up the compose stack, runs a handful of turns of each study prompt
+# through `scripts/measure.py`, and lets the harness's own validation decide the
+# outcome: a failed validator, a broken stream, a missing persisted message or
+# an uncalled tool makes `measure.py` exit non-zero, which fails the job. No
+# step asserts on a timing value -- GitHub runners are far too noisy for that.
+#
+# Required secret: GROQ_API_KEY (the provider behind the default `groq-oss`
+# LiteLLM model). Set OPENAI_API_KEY or GEMINI_API_KEY as well, plus the
+# LLM_MODEL variable, to smoke a different provider. Without GROQ_API_KEY the
+# job skips rather than failing, because the turns would all 502.
+
+name: harness smoke
+
+on:
+  pull_request:
+    paths:
+      - "sarjy-backend/**"
+      - "sarjy-mcp-server/**"
+      - "docker-compose.yml"
+      - ".github/workflows/harness-smoke.yml"
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      LLM_MODEL: ${{ vars.LLM_MODEL || 'groq-oss' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for a provider key
+        id: key
+        run: |
+          if [ -z "$GROQ_API_KEY" ] && [ -z "$OPENAI_API_KEY" ] && [ -z "$GEMINI_API_KEY" ]; then
+            echo "No LLM key configured; skipping the smoke run." >> "$GITHUB_STEP_SUMMARY"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.key.outputs.present == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Install the harness dependency
+        if: steps.key.outputs.present == 'true'
+        run: pip install httpx==0.28.1
+
+      - name: Build and start the stack
+        if: steps.key.outputs.present == 'true'
+        run: docker compose up -d --build
+
+      - name: Wait for health
+        if: steps.key.outputs.present == 'true'
+        run: |
+          for _ in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/api/health >/dev/null; then
+              echo "healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "the stack never became healthy"
+          docker compose ps
+          docker compose logs --tail 100
+          exit 1
+
+      - name: Run the harness against each study prompt
+        if: steps.key.outputs.present == 'true'
+        working-directory: sarjy-backend
+        run: |
+          set -e
+          # Written to the runner's temp directory: docs/latency/runs holds the
+          # published study and is not CI's to overwrite.
+          out="$RUNNER_TEMP/latency"
+          run() {
+            python scripts/measure.py \
+              --base-url http://localhost:8080 \
+              --iterations 3 \
+              --out-dir "$out" \
+              --label "$1" \
+              --prompt "$2" \
+              "${@:3}"
+          }
+          run capital "In one sentence, what is the capital of France?"
+          run capital-stream "In one sentence, what is the capital of France?" --stream
+          run paragraph "Describe Paris in exactly four sentences."
+          run paragraph-stream "Describe Paris in exactly four sentences." --stream
+          run weather "What's the weather in Riyadh right now?"
+          run weather-stream "What's the weather in Riyadh right now?" --stream
+
+      - name: Backend logs on failure
+        if: failure() && steps.key.outputs.present == 'true'
+        run: docker compose logs --tail 200 backend mcp
+
+      - name: Tear down
+        if: always() && steps.key.outputs.present == 'true'
+        run: docker compose down -v

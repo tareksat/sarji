@@ -44,6 +44,24 @@ def title_from_message(message: str) -> str:
 RETRYABLE = (RateLimitError, APIConnectionError, APITimeoutError)
 
 
+def tool_names_from(result) -> list[str]:
+    """Names of the tools the model called this turn, in call order.
+
+    Local tools (`save_memory`) and MCP ones (`get_weather`) both arrive as
+    `tool_call_item`s on the run result, so one pass covers both. Repeats are
+    kept -- calling a tool twice is worth seeing. Read defensively because the
+    streamed and non-streamed results are different classes.
+    """
+    names: list[str] = []
+    for item in getattr(result, "new_items", None) or []:
+        if getattr(item, "type", None) != "tool_call_item":
+            continue
+        name = getattr(item, "tool_name", None)
+        if name:
+            names.append(name)
+    return names
+
+
 async def _run_with_retry(agent, history: list[dict], context: ChatContext):
     last_error: Exception | None = None
     delays = [0, *settings.llm_retry_backoff_seconds]
@@ -63,7 +81,7 @@ async def _run_with_retry(agent, history: list[dict], context: ChatContext):
 
 async def handle_chat(
     db: DbSession, user_id: uuid.UUID, session_id: uuid.UUID, message: str
-) -> tuple[str, dict[str, float | None]]:
+) -> tuple[str, dict[str, float | None], list[str]]:
     logger.info("handle_chat start user_id=%s session_id=%s", user_id, session_id)
     timings = Timings()
 
@@ -134,4 +152,4 @@ async def handle_chat(
         user_id, session_id, timings.as_log_line(payload),
     )
 
-    return reply, payload
+    return reply, payload, tool_names_from(result)

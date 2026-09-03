@@ -18,7 +18,7 @@ from ..models import now_utc
 from ..repositories import memory as memory_repo
 from ..repositories import sessions as sessions_repo
 from ..repositories import users as users_repo
-from .chat import _rate_limiter, title_from_message
+from .chat import _rate_limiter, title_from_message, tool_names_from
 
 logger = logging.getLogger(__name__)
 
@@ -185,4 +185,11 @@ async def stream_chat(
         user_id, session_id, timings.as_log_line(payload),
     )
 
-    yield {"type": "done", "reply": reply, "timings": payload}
+    # `new_items` is complete once the stream has drained, so the streamed
+    # path reports tools the same way the non-streamed one does.
+    yield {
+        "type": "done",
+        "reply": reply,
+        "timings": payload,
+        "tools_used": tool_names_from(result),
+    }
