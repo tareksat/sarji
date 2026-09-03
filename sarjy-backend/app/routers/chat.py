@@ -71,13 +71,19 @@ async def chat(req: ChatRequest, db: DbSession = Depends(get_db)):
 
     Outbound model calls pass through a token-bucket limiter that makes callers
     wait rather than rejecting them, so a busy server shows up as latency.
+
+    An input guardrail screens the message in parallel with the model call. A
+    refused message still answers 200: `reply` is a fixed refusal, `blocked` is
+    true, and both messages are persisted like any other turn.
     """
     user_id = parse_uuid(req.user_id, "user_id")
     session_id = parse_uuid(req.session_id, "session_id")
     _assert_available(db, session_id, user_id)
 
     try:
-        reply, timings, tools_used = await handle_chat(db, user_id, session_id, req.message, req.model)
+        reply, timings, tools_used, blocked = await handle_chat(
+            db, user_id, session_id, req.message, req.model
+        )
     except RateLimitedError as exc:
         raise HTTPException(
             status_code=429,
@@ -91,7 +97,7 @@ async def chat(req: ChatRequest, db: DbSession = Depends(get_db)):
         logger.warning("Returning 502 for user_id=%s session_id=%s: %s", user_id, session_id, exc)
         raise HTTPException(status_code=502, detail=str(exc))
 
-    return ChatResponse(reply=reply, timings=timings, tools_used=tools_used)
+    return ChatResponse(reply=reply, timings=timings, tools_used=tools_used, blocked=blocked)
 
 
 @router.post(
@@ -112,7 +118,10 @@ async def chat_stream(req: ChatRequest, db: DbSession = Depends(get_db)):
 
     Both `done` and `error` are terminal: exactly one of them ends the stream,
     and no `done` follows an `error`. The `done` frame carries the same
-    `reply`, `timings` and `tools_used` fields as the non-streamed response.
+    `reply`, `timings`, `tools_used` and `blocked` fields as the non-streamed
+    response. A refused message may have leaked a few `delta` frames before the
+    guardrail tripped; the `done` frame's `reply` is the refusal, and the client
+    should display that rather than the accumulated deltas.
     """
     user_id = parse_uuid(req.user_id, "user_id")
     session_id = parse_uuid(req.session_id, "session_id")

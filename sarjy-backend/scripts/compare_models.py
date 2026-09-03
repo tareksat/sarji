@@ -54,6 +54,9 @@ def run_model(client: httpx.Client, user_id: str, prompt: str, stream: bool,
     return rows
 
 
+ERROR_COLUMN = "errors"
+
+
 def p50_table(results: dict[str, list[dict]], columns: list[str]) -> dict[str, dict[str, float | None]]:
     """p50 per model per column; None where a model has no valid values for it."""
     table: dict[str, dict[str, float | None]] = {}
@@ -66,20 +69,37 @@ def p50_table(results: dict[str, list[dict]], columns: list[str]) -> dict[str, d
     return table
 
 
-def render_comparison(prompt: str, results: dict[str, list[dict]]) -> str:
-    columns = REPORT_COLUMNS
+def full_table(results: dict[str, list[dict]], columns: list[str]) -> dict[str, dict[str, float | None]]:
+    """`p50_table` plus a trailing `ERROR_COLUMN`: how many of a model's turns
+    failed validation (any check in `evaluate`, including a bad response)."""
     table = p50_table(results, columns)
+    for model, rows in results.items():
+        table[model][ERROR_COLUMN] = float(len(rows) - len(valid_rows(rows)))
+    return table
+
+
+def render_comparison(prompt: str, results: dict[str, list[dict]]) -> str:
+    columns = [*REPORT_COLUMNS, ERROR_COLUMN]
+    table = full_table(results, REPORT_COLUMNS)
     lines = [
         "# Latency comparison across models",
         "",
         f"- Prompt: `{prompt}`",
-        "- Values are p50 (ms) across each model's valid turns.",
+        "- Values are p50 (ms) across each model's valid turns; `errors` is a raw count.",
         "",
         "| Model | " + " | ".join(f"`{name}`" for name in columns) + " |",
         "|---|" + "---:|" * len(columns),
     ]
     for model, values in table.items():
-        cells = [str(v) if v is not None else "—" for v in values.values()]
+        cells = []
+        for name in columns:
+            v = values[name]
+            if v is None:
+                cells.append("—")
+            elif name == ERROR_COLUMN:
+                cells.append(str(int(v)))
+            else:
+                cells.append(str(v))
         lines.append(f"| {model} | " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
 
@@ -146,20 +166,25 @@ def render_html(prompt: str, results: dict[str, list[dict]]) -> str:
     """Self-contained HTML report: the p50 table, plus one grouped bar chart
     with every column side by side. No external assets, so the file opens
     straight from disk."""
-    columns = REPORT_COLUMNS
-    table = p50_table(results, columns)
+    columns = [*REPORT_COLUMNS, ERROR_COLUMN]
+    table = full_table(results, REPORT_COLUMNS)
     models = list(table.keys())
 
     def esc(text: str) -> str:
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
+    def cell(model: str, name: str) -> str:
+        value = table[model][name]
+        if value is None:
+            return "<td>—</td>"
+        if name == ERROR_COLUMN:
+            return f"<td>{int(value)}</td>"
+        return f"<td>{value:.1f}</td>"
+
     header_cells = "".join(f"<th>{esc(name)}</th>" for name in columns)
     body_rows = []
     for model in models:
-        cells = "".join(
-            f"<td>{table[model][name]:.1f}</td>" if table[model][name] is not None else "<td>—</td>"
-            for name in columns
-        )
+        cells = "".join(cell(model, name) for name in columns)
         body_rows.append(f"<tr><th>{esc(model)}</th>{cells}</tr>")
 
     legend_items = "".join(

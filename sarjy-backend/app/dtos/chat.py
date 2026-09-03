@@ -70,3 +70,10 @@ class ChatResponse(BaseModel):
             "when the turn was answered from the model alone."
         ),
     )
+    blocked: bool = Field(
+        default=False,
+        description=(
+            "True when the input guardrail refused the message. `reply` is then "
+            "a fixed refusal and `tools_used` is empty."
+        ),
+    )

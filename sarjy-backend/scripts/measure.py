@@ -118,9 +118,13 @@ def run_once(
 ) -> dict:
     """One turn. Returns its timings, reply, tools and any failure found here.
 
-    The `failures` list carries only what this function can see -- currently
-    the stream-integrity check; the content, persistence and tool checks are
-    applied by `evaluate`, which needs the prompt and a second HTTP call.
+    Never raises for a response-level failure -- a non-2xx status or an
+    in-band `error` frame is recorded in `failures` instead, so one bad turn
+    (a rejected model alias, a rate limit) fails that iteration without
+    aborting the rest of the run. The `failures` list otherwise carries only
+    what this function can see -- the stream-integrity check; the content,
+    persistence and tool checks are applied by `evaluate`, which needs the
+    prompt and a second HTTP call.
 
     `model` overrides the server's default LLM for this turn (used by
     `compare_models.py`); left unset, the server falls back to its own default.
@@ -133,7 +137,20 @@ def run_once(
 
     if not stream:
         resp = client.post("/api/chat", json=payload)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError:
+            elapsed = (time.perf_counter() - started) * 1000
+            return {
+                "timings": {
+                    "client_first_byte_ms": round(elapsed, 1),
+                    "client_total_ms": round(elapsed, 1),
+                },
+                "reply": "",
+                "tools_used": [],
+                "session_id": session_id,
+                "failures": [f"http_error:{resp.status_code}"],
+            }
         body = resp.json()
         elapsed = (time.perf_counter() - started) * 1000
         timings = dict(body.get("timings") or {})
@@ -152,8 +169,22 @@ def run_once(
     deltas: list[str] = []
     reply = ""
     tools_used: list[str] = []
+    stream_error: str | None = None
     with client.stream("POST", "/api/chat/stream", json=payload) as resp:
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError:
+            elapsed = (time.perf_counter() - started) * 1000
+            return {
+                "timings": {
+                    "client_first_byte_ms": round(elapsed, 1),
+                    "client_total_ms": round(elapsed, 1),
+                },
+                "reply": "",
+                "tools_used": [],
+                "session_id": session_id,
+                "failures": [f"http_error:{resp.status_code}"],
+            }
         for line in resp.iter_lines():
             if not line.startswith("data: "):
                 continue
@@ -167,7 +198,21 @@ def run_once(
                 reply = event.get("reply", "")
                 tools_used = list(event.get("tools_used") or [])
             elif event["type"] == "error":
-                raise RuntimeError(event.get("detail", "stream error"))
+                stream_error = event.get("detail", "stream error")
+                break
+
+    if stream_error is not None:
+        total = (time.perf_counter() - started) * 1000
+        return {
+            "timings": {
+                "client_first_byte_ms": round(first_byte or total, 1),
+                "client_total_ms": round(total, 1),
+            },
+            "reply": "",
+            "tools_used": [],
+            "session_id": session_id,
+            "failures": [f"stream_error:{stream_error}"],
+        }
 
     total = (time.perf_counter() - started) * 1000
     timings["client_first_byte_ms"] = round(first_byte or total, 1)

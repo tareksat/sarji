@@ -58,6 +58,8 @@ A process-local `TokenBucketRateLimiter` (`app/core/rate_limiter.py`) throttles 
 
 The agent (`app/agent/sarjy_agent.py`) exposes one local tool, `save_memory`, which the LLM calls to persist durable facts about the user into the `memories` table — this is how "remembers things across sessions" works, separate from the recent-message history. Everything else (currently just `get_weather`) comes from `sarjy-mcp-server` via `mcp_servers=[sarjy_mcp_server]` on the `Agent` — see `app/agent/mcp.py` for the client singleton, connected/cleaned up once in `app/main.py`'s `lifespan` (`MCP_SERVER_URL` in config).
 
+An input guardrail (`app/agent/guardrails.py`, attached in `build_agent`) screens the newest user message with a second, tool-less classifier agent running in parallel with the main model call. A flagged message is cancelled by the SDK and both routes answer with the fixed refusal `"I can't help with that."` under HTTP 200 / a `done` frame with `blocked: true`, persisted like any reply. It fails open on classifier errors. `INPUT_GUARDRAIL_ENABLED` is the kill switch (a measurement switch: each turn is two outbound LLM calls with it on); `GUARDRAIL_MODEL` picks a different model for the classifier.
+
 The agent also carries a local copy of the weather tool (`app/agent/local_weather.py`) behind `USE_LOCAL_WEATHER_TOOL`. It exists only to measure what the MCP transport hop costs and ships `false` — the MCP server is the shipped path.
 
 DB models (`app/models/`): `User` (1) -> `Session` (many) -> `Message` (many); `Memory` belongs to a `User` and optionally references the `Session` it was learned in.
