@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from ..core.config import settings
 from ..core.db import SessionLocal
 from ..models import Memory
+from .guardrails import sarjy_input_guardrail
 from .local_weather import local_get_weather
 from .mcp import sarjy_mcp_server
 
@@ -114,7 +115,7 @@ async def save_memory(ctx: RunContextWrapper[ChatContext], fact: str) -> str:
     return f"Remembered (shortened): {fact}" if shortened else f"Remembered: {fact}"
 
 
-def build_agent(memory_facts: list[str], mcp_ready: bool = True) -> Agent:
+def build_agent(memory_facts: list[str], mcp_ready: bool = True, model: str | None = None) -> Agent:
     instructions = SYSTEM_PROMPT
     if memory_facts:
         bullet_list = "\n".join(f"- {fact}" for fact in memory_facts)
@@ -132,10 +133,15 @@ def build_agent(memory_facts: list[str], mcp_ready: bool = True) -> Agent:
         tools.append(local_get_weather)
         mcp_servers = []
 
+    # Runs alongside the first model call, so a safe turn pays no extra latency;
+    # a tripped one is cancelled by the SDK and answered with BLOCKED_REPLY.
+    input_guardrails = [sarjy_input_guardrail] if settings.input_guardrail_enabled else []
+
     return Agent(
         name="Sarjy",
         instructions=instructions,
-        model=settings.llm_model,
+        model=model or settings.llm_model,
         tools=tools,
         mcp_servers=mcp_servers,
+        input_guardrails=input_guardrails,
     )

@@ -4,11 +4,12 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 
-from agents import Runner
+from agents import InputGuardrailTripwireTriggered, Runner
 from openai.types.responses import ResponseTextDeltaEvent
 from sqlalchemy.orm import Session as DbSession
 
 from ..agent import mcp
+from ..agent.guardrails import BLOCKED_REPLY
 from ..agent.sarjy_agent import ChatContext, build_agent
 from ..core.config import settings
 from ..core.db import SessionLocal
@@ -18,7 +19,7 @@ from ..models import now_utc
 from ..repositories import memory as memory_repo
 from ..repositories import sessions as sessions_repo
 from ..repositories import users as users_repo
-from .chat import _rate_limiter, title_from_message
+from .chat import _rate_limiter, blocked_reason, title_from_message, tool_names_from
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ async def _load_context(
 
 
 async def stream_chat(
-    db: DbSession, user_id: uuid.UUID, session_id: uuid.UUID, message: str
+    db: DbSession, user_id: uuid.UUID, session_id: uuid.UUID, message: str, model: str | None = None
 ) -> AsyncIterator[dict]:
     """Run one turn, yielding token deltas as they arrive.
 
@@ -99,7 +100,7 @@ async def stream_chat(
     with timings.span("db_read_ms"):
         history, facts = await _load_context(session_id, user_id)
 
-    agent = build_agent(facts, mcp_ready=await mcp.ensure_connected())
+    agent = build_agent(facts, mcp_ready=await mcp.ensure_connected(), model=model)
     context = ChatContext(user_id=user_id, session_id=session_id)
 
     def _persist(reply: str) -> None:
@@ -111,6 +112,7 @@ async def stream_chat(
 
     chunks: list[str] = []
     completed = False
+    blocked = False
     result = None
     llm_started = time.perf_counter()
 
@@ -127,6 +129,20 @@ async def stream_chat(
             chunks.append(event.data.delta)
             yield {"type": "delta", "text": event.data.delta}
         completed = True
+    except InputGuardrailTripwireTriggered as exc:
+        # The guardrail runs alongside the model, so a few deltas may already be
+        # on the wire. They are dropped here, not persisted (`completed` keeps
+        # the finally block off them), and the client replaces its text with
+        # the refusal when the `done` frame lands.
+        blocked = True
+        completed = True
+        chunks.clear()
+        logger.warning(
+            "Blocked turn user_id=%s session_id=%s: %s",
+            user_id, session_id, blocked_reason(exc),
+        )
+        if result is not None:
+            result.cancel()
     except Exception as exc:
         db.rollback()
         logger.error(
@@ -162,8 +178,11 @@ async def stream_chat(
     # is then whatever the model returned -- possibly None. Coerced, because the
     # column is NOT NULL and this write happens after the headers are sent,
     # where a raised error reaches the client as a stream that simply stops.
-    reply = "".join(chunks) or result.final_output
-    reply = "" if reply is None else str(reply)
+    if blocked:
+        reply = BLOCKED_REPLY
+    else:
+        reply = "".join(chunks) or result.final_output
+        reply = "" if reply is None else str(reply)
 
     with timings.span("db_write_ms"):
         try:
@@ -185,4 +204,12 @@ async def stream_chat(
         user_id, session_id, timings.as_log_line(payload),
     )
 
-    yield {"type": "done", "reply": reply, "timings": payload}
+    # `new_items` is complete once the stream has drained, so the streamed
+    # path reports tools the same way the non-streamed one does.
+    yield {
+        "type": "done",
+        "reply": reply,
+        "timings": payload,
+        "tools_used": [] if blocked else tool_names_from(result),
+        "blocked": blocked,
+    }

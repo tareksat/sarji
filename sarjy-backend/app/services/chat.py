@@ -2,11 +2,12 @@ import asyncio
 import logging
 import uuid
 
-from agents import Runner
+from agents import InputGuardrailTripwireTriggered, Runner
 from openai import APIConnectionError, APITimeoutError, RateLimitError
 from sqlalchemy.orm import Session as DbSession
 
 from ..agent import mcp
+from ..agent.guardrails import BLOCKED_REPLY
 from ..agent.sarjy_agent import ChatContext, build_agent
 from ..core.config import settings
 from ..core.rate_limiter import TokenBucketRateLimiter
@@ -44,6 +45,24 @@ def title_from_message(message: str) -> str:
 RETRYABLE = (RateLimitError, APIConnectionError, APITimeoutError)
 
 
+def tool_names_from(result) -> list[str]:
+    """Names of the tools the model called this turn, in call order.
+
+    Local tools (`save_memory`) and MCP ones (`get_weather`) both arrive as
+    `tool_call_item`s on the run result, so one pass covers both. Repeats are
+    kept -- calling a tool twice is worth seeing. Read defensively because the
+    streamed and non-streamed results are different classes.
+    """
+    names: list[str] = []
+    for item in getattr(result, "new_items", None) or []:
+        if getattr(item, "type", None) != "tool_call_item":
+            continue
+        name = getattr(item, "tool_name", None)
+        if name:
+            names.append(name)
+    return names
+
+
 async def _run_with_retry(agent, history: list[dict], context: ChatContext):
     last_error: Exception | None = None
     delays = [0, *settings.llm_retry_backoff_seconds]
@@ -61,9 +80,16 @@ async def _run_with_retry(agent, history: list[dict], context: ChatContext):
     raise last_error
 
 
+def blocked_reason(exc: InputGuardrailTripwireTriggered) -> str:
+    """The classifier's one-line reason, read defensively: `output_info` is
+    whatever the guardrail chose to attach, and None on a fail-open path."""
+    return getattr(exc.guardrail_result.output.output_info, "reason", "") or ""
+
+
 async def handle_chat(
-    db: DbSession, user_id: uuid.UUID, session_id: uuid.UUID, message: str
-) -> tuple[str, dict[str, float | None]]:
+    db: DbSession, user_id: uuid.UUID, session_id: uuid.UUID, message: str, model: str | None = None
+) -> tuple[str, dict[str, float | None], list[str], bool]:
+    """Run one turn. Returns (reply, timings, tools_used, blocked)."""
     logger.info("handle_chat start user_id=%s session_id=%s", user_id, session_id)
     timings = Timings()
 
@@ -91,12 +117,22 @@ async def handle_chat(
     with timings.span("db_read_ms"):
         session, history, facts = await asyncio.to_thread(_read)
 
-    agent = build_agent(facts, mcp_ready=await mcp.ensure_connected())
+    agent = build_agent(facts, mcp_ready=await mcp.ensure_connected(), model=model)
     context = ChatContext(user_id=user_id, session_id=session_id)
 
+    blocked = False
+    result = None
     try:
         with timings.span("llm_total_ms"):
             result = await _run_with_retry(agent, history, context)
+    except InputGuardrailTripwireTriggered as exc:
+        # Not a failure: the turn is answered with a fixed refusal, persisted
+        # like any reply so the conversation reloads coherently.
+        blocked = True
+        logger.warning(
+            "Blocked turn user_id=%s session_id=%s: %s",
+            user_id, session_id, blocked_reason(exc),
+        )
     except Exception as exc:
         db.rollback()
         # See the streamed path: a dead-but-not-None MCP session fails every
@@ -110,9 +146,12 @@ async def handle_chat(
             "Sarjy is having trouble responding right now. Please try again."
         ) from exc
 
-    # A tool-only turn can leave `final_output` empty or non-string, and the
-    # content column is NOT NULL.
-    reply = "" if result.final_output is None else str(result.final_output)
+    if blocked:
+        reply = BLOCKED_REPLY
+    else:
+        # A tool-only turn can leave `final_output` empty or non-string, and the
+        # content column is NOT NULL.
+        reply = "" if result.final_output is None else str(result.final_output)
 
     def _write() -> None:
         sessions_repo.add_message(db, session_id, "assistant", reply)
@@ -134,4 +173,4 @@ async def handle_chat(
         user_id, session_id, timings.as_log_line(payload),
     )
 
-    return reply, payload
+    return reply, payload, [] if blocked else tool_names_from(result), blocked

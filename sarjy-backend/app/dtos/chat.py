@@ -31,6 +31,13 @@ class ChatRequest(BaseModel):
         max_length=MESSAGE_MAX_LENGTH,
         description="The user's turn, typed or transcribed.",
     )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "LLM model override for this turn. Falls back to LLM_MODEL from the "
+            "server's env when omitted."
+        ),
+    )
 
     @field_validator("message")
     @classmethod
@@ -53,5 +60,20 @@ class ChatResponse(BaseModel):
             "`db_write_ms`, `limiter_wait_ms`, `llm_total_ms`, `llm_ttft_ms` "
             "(null unless streamed) and `total_ms`. Present so the client can "
             "attribute latency without server access."
+        ),
+    )
+    tools_used: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Names of the tools the model called during this turn, in call "
+            "order, local (`save_memory`) and MCP (`get_weather`) alike. Empty "
+            "when the turn was answered from the model alone."
+        ),
+    )
+    blocked: bool = Field(
+        default=False,
+        description=(
+            "True when the input guardrail refused the message. `reply` is then "
+            "a fixed refusal and `tools_used` is empty."
         ),
     )

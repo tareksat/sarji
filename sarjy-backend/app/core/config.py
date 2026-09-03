@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     # Measurement switch only: serves get_weather as a local function tool so
     # the MCP transport's per-call cost can be measured. Ships false.
     use_local_weather_tool: bool = False
+    # Screens every incoming message with a classifier agent that runs in
+    # parallel with the main model call. Off is a measurement switch: it removes
+    # the second outbound LLM call each turn makes.
+    input_guardrail_enabled: bool = True
+    # Empty means the guardrail uses the same model as the turn it screens.
+    guardrail_model: str = ""
     # The backstop, not the usual bound. Each probe carries a tighter timeout of
     # its own, so a hung dependency reports what actually failed rather than a
     # bare "timed out".

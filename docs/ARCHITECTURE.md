@@ -103,6 +103,23 @@ Three things differ from the diagram above:
 `llm_ttft_ms` exists only on the streamed path — a non-streamed turn has no
 first-token moment to measure.
 
+**Input guardrail.** Both routes attach an SDK input guardrail to the agent
+(`app/agent/guardrails.py`): a second, tool-less agent that classifies the
+newest user message — prompt injection, memory poisoning, tool misuse, data
+exfiltration, harmful content, spam — and returns `{is_unsafe, reason}`. It
+runs *in parallel* with the first model call, so a safe turn pays no extra
+latency; a flagged one is cancelled by the SDK and answered with the fixed
+refusal `"I can't help with that."`, persisted like any reply, returned with
+`blocked: true` and an empty `tools_used`. On the streamed route a few `delta`
+frames may already be on the wire before the trip; the `done` frame carries the
+refusal and the browser shows that instead. The classifier sees only the
+message text, never the history or the memory facts, so earlier turns cannot
+steer it. It fails open: a classifier error is logged and the turn proceeds.
+Two settings: `INPUT_GUARDRAIL_ENABLED` (a measurement switch, default on) and
+`GUARDRAIL_MODEL` (default: the turn's own model). Every turn is now two
+outbound LLM calls; the token-bucket limiter counts turns, not calls, so the
+provider sees up to twice `LLM_RATE_LIMIT_PER_MINUTE`.
+
 **Failure handling.** `openai.RateLimitError` is retried on a fixed backoff
 (`llm_retry_backoff_seconds`). Any other exception rolls back the transaction
 and surfaces as `LLMUnavailableError` → HTTP 502, which the UI shows as an
